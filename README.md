@@ -2,15 +2,25 @@
 
 Code written by a coding agent (or someone else) is hard to follow once there is a lot of it.
 Code Explainer turns a repository into an interactive map that anyone can read, from a complete beginner to a
-senior engineer, using nothing but static analysis. There is no AI model, no network call and no
-API key: every sentence is worked out from the code itself.
+senior engineer. The core is pure static analysis: every sentence is worked out from the code itself, with no
+AI model, no network call and no API key. On top of that there is an optional AI layer that uses a model running on
+*your own* computer (Ollama, LM Studio or any OpenAI-compatible server); it never runs unless you ask for it.
 
 ```bash
 pip install -e .                      # add '.[treesitter]' for deeper JavaScript/TypeScript
 code-explainer analyze path/to/repo -o report.html --open     # one self-contained HTML file
 code-explainer analyze owner/repo                              # or any git URL
-code-explainer serve path/to/repo --open                       # live: updates as files change
+code-explainer serve path/to/repo --open                       # live: updates as files change, AI tab included
+code-explainer analyze path/to/repo --ai                       # also have a local model explain the key files
 ```
+
+What you get, tab by tab: **Story** (a guided tour), **Changes** (review of a diff), **Overview**, **Flow**,
+**Treemap**, **Dependencies**, **Health** (which tests reach the code, and a safety check), **AI** (local model, `serve`
+only) and **Words** (a glossary).
+
+Remote repositories are cloned with your normal git setup. For a private repository, either clone it yourself first
+and pass the folder, or make sure `git clone` already works for it (an SSH key, a credential helper, or
+`gh auth login`).
 
 The core needs only the Python standard library (plus `tomli` on Python 3.10, which has no built-in TOML parser), and the report works offline.
 
@@ -38,6 +48,7 @@ tools, calling is asking a helper for a favour.
 - **Treemap:** area is lines of code. Colour by language, complexity, churn, popularity,
   "possibly unused", what you understand, or what changed.
 - **Dependencies:** module graph where folders collapse and expand.
+- **Health** and **AI** are described below.
 - Search (`/`) covers files and symbols. Views are linkable through the URL.
 
 ## Review what an agent changed
@@ -91,7 +102,7 @@ the internet, and nothing runs until you press **Start AI Explainer**.
   model, and unloads and stops *only what it started* when you press Stop, after the idle time you set, or when
   you quit. A server that was already running, or a model you had loaded yourself, is left alone.
 - **Tune the answers:** presets (Precise, Balanced, Creative), temperature, top-p, top-k, min-p, answer length,
-  context size, repeat penalty, seed, answer length and your own extra instructions. Controls a server cannot use
+  context size, repeat penalty, seed and your own extra instructions. Controls a server cannot use
   are greyed out with the reason. Answers follow the "Explain" level in the top menu (beginner-friendly / plain English / technical).
 - **Grounded in your code, with sources:** before each question the tool searches the whole project (functions,
   classes, docstrings, docs, and the call and import graphs) and gives the model only the relevant code, numbered by
@@ -144,12 +155,23 @@ reported as failed instead of being embedded half-written.
 | JavaScript / TypeScript | yes | yes | yes with `[treesitter]`; regex fallback without it (no call graph) |
 | Others | size and rough complexity | no | no |
 
+The Health tab's test map needs the call graph, so it covers Python and (with `[treesitter]`) JavaScript/TypeScript;
+other languages are never counted as untested. The safety check reads Python from its syntax
+tree and JavaScript/TypeScript by pattern, and looks for secrets in every text file.
+
 ## Honest limits
 
 Analysis is static. Dynamic imports, reflection and framework magic can make a used file look
 "possibly unused" and can hide calls, so treat those labels as places to look, not verdicts. Calls
 into code outside the repository produce no link. Copy-paste detection finds identical bodies, not
 renamed ones. Name-based explanations are conventions ("`get_x` gets x") and are labelled as guesses.
+
+The Health tab is an estimate too: "no test seen" means no test was seen reaching a function through the call graph, not
+that coverage was measured, and a safety finding is a place to look, not proof of a bug.
+
+The AI layer is built against the documented APIs of Ollama and LM Studio and is tested with simulated servers, so a
+real server can still behave differently (LM Studio's older model list and `lms ls --json` output are partly assumed).
+Please report mismatches.
 
 ## Development
 
@@ -159,9 +181,15 @@ playwright install chromium     # for the browser tests; or set CHROMIUM_PATH
 pytest
 ```
 
+Where things live: `code_explainer/analysis/` (per-language parsers), `calls.py` / `resolve.py` (call graph and
+imports), `explain.py` (the plain-language layer), `diff.py` (change review), `testmap.py` and `hygiene*.py` (the
+Health tab), `server.py` (serve mode), `ai/` (providers, lifecycle, retrieval, explain tasks, batch), and `web/`
+(the single-file app: `app.js` with `ai.js` and `health.js` spliced in by `report.py`). The AI tests run against
+fake Ollama and LM Studio servers (`tests/ai_fakes.py`, `tests/fake_backends.py`), so they need no model.
+
 Work test-first: run the whole suite before you change anything (so you know the baseline is
 green), write a failing test for the new behaviour or bug, make it pass, then run the whole suite
 again. CI enforces a coverage floor (90%, or 80% without tree-sitter).
 
-CI runs the tests on Python 3.10 to 3.13, with and without tree-sitter, plus a browser test and
-a package build. Pushing a `v*` tag publishes to PyPI (trusted publishing) and creates a GitHub release.
+CI runs the tests on Python 3.10 to 3.13, with and without tree-sitter, plus the browser tests
+(`tests/test_ui*.py`) and a package build. Pushing a `v*` tag publishes to PyPI (trusted publishing) and creates a GitHub release.
