@@ -98,7 +98,23 @@ open file heavily), but it will miss a question phrased in completely different 
 "fit"). Naming the function or file in your question always works.
 
 Models can be wrong. Treat answers as a second opinion beside the deterministic explanations, not as the truth.
-A saved report (`analyze`) cannot talk to a model; use `serve` for that.
+A saved report (`analyze`) cannot talk to a model while you read it; use `serve` for that, or write the explanations
+into the report ahead of time:
+
+```
+code-explainer analyze . --ai                         # the model chosen in the AI tab
+code-explainer analyze . --last 3 --ai --ai-limit 6   # explain the changes of the last 3 commits first
+code-explainer analyze . --ai --ai-model qwen2.5-coder:7b --ai-level plain
+```
+
+`--ai` starts your local model, asks it to explain the most important files (entry points first, then what they
+depend on) and, with `--last`/`--base`, the changed files that affect the most other code (up to half of the
+`--ai-limit`, default 10). It then unloads what it started. The answers appear on those files and changes as clearly
+labelled, read-only **AI explanation** sections, with the model and level that wrote them. Progress is printed as it
+goes. Press Ctrl-C at any time to keep what is finished; run the same command again to continue, because finished
+answers are saved and reused (they are shared with `serve`). If the model is missing or off, the report is still
+written, without AI sections, and the exit code is 1. An explanation that was cut off at the length limit is
+reported as failed instead of being embedded half-written.
 
 ## Languages
 
