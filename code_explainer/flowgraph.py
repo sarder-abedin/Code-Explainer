@@ -159,33 +159,46 @@ class _Graph:
             self.link(entries, more)
         return []
 
-    # --- statements
-    def stmts(self, body: list[ast.stmt], entries: list[tuple[int, str]]) -> list[tuple[int, str]]:
-        pending: list[ast.stmt] = []
+    # --- statements (the language-specific parts are the small hooks below)
+    def skipped(self, i: int, s) -> bool:
+        return isinstance(s, _SKIPPED) or (i == 0 and isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)
+                                           and isinstance(s.value.value, str))      # globals and the docstring
+
+    def simple(self, s) -> bool:
+        return isinstance(s, _SIMPLE)
+
+    def phrase(self, s) -> tuple[str, str]:
+        return _phrase(s)
+
+    def span(self, s) -> tuple[int, int]:
+        return s.lineno, s.end_lineno or s.lineno
+
+    def src(self, s) -> str:
+        return _short(_code(s), CODE_CHARS)
+
+    def stmts(self, body: list, entries: list[tuple[int, str]]) -> list[tuple[int, str]]:
+        pending: list = []
 
         def flush() -> None:
             nonlocal entries
             if not pending:
                 return
-            plain = _join([_phrase(s)[0] for s in pending])
-            kid = _join([_phrase(s)[1] for s in pending])
-            code = "; ".join(_short(_code(s), CODE_CHARS) for s in pending)
-            node = self.add("step", code, plain, kid, pending[0].lineno, max(s.end_lineno or s.lineno for s in pending))
+            phrases = [self.phrase(s) for s in pending]
+            node = self.add("step", "; ".join(self.src(s) for s in pending), _join([p for p, _ in phrases]),
+                            _join([k for _, k in phrases]), self.span(pending[0])[0], max(self.span(s)[1] for s in pending))
             self.link(entries, node)
             entries = [(node, "")]
             pending.clear()
 
         for i, s in enumerate(body):
-            if i == 0 and isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str):
-                continue                                                # the docstring
-            if isinstance(s, _SKIPPED):
+            if self.skipped(i, s):
                 continue
-            if isinstance(s, _SIMPLE):
+            if self.simple(s):
                 pending.append(s)
                 continue
             flush()
             if self.truncated or len(self.nodes) >= MAX_NODES:
-                return self.stop_here(entries, s.lineno)
+                return self.stop_here(entries, self.span(s)[0])
             entries = self.compound(s, entries)
             if not entries:
                 return []
@@ -229,7 +242,7 @@ class _Graph:
         head = self.add("loop", f"{'async ' if isinstance(s, ast.AsyncFor) else ''}for {_code(s.target)} in {_code(s.iter)}:",
                         f"For each {t} in {it}", f"Take each {t} from {it}, one by one", s.lineno)
         self.link(entries, head)
-        ctx = {"head": head, "breaks": []}
+        ctx = {"head": head, "breaks": [], "continues": [], "loop": True}
         self.loops.append(ctx)
         back = self.stmts(s.body, [(head, "each item")])
         self.loops.pop()
@@ -243,7 +256,7 @@ class _Graph:
         c = _clause(s.test)
         head = self.add("loop", f"while {_code(s.test)}:", f"Keep going while {c}", None, s.lineno, s.test.end_lineno)
         self.link(entries, head)
-        ctx = {"head": head, "breaks": []}
+        ctx = {"head": head, "breaks": [], "continues": [], "loop": True}
         self.loops.append(ctx)
         back = self.stmts(s.body, [(head, "yes")])
         self.loops.pop()
@@ -268,8 +281,16 @@ class _Graph:
             self.link([(t, "on error")], hid)
             exits = exits + self.stmts(h.body, [(hid, "")])
         if s.finalbody:
-            exits = self.stmts(s.finalbody, exits) if exits else []
+            exits = self._finally(s.finalbody, exits, t)
         return exits
+
+    def _finally(self, body: list, exits: list, try_node: int) -> list:
+        """The finally block runs on every path. When no path reaches it normally (they all return, raise or jump) it is
+        still drawn, hanging off the try, and nothing continues after it."""
+        if exits:
+            return self.stmts(body, exits)
+        self.stmts(body, [(try_node, "always at the end")])
+        return []
 
     def _with(self, s, entries: list) -> list:
         items = ", ".join(_code(i.context_expr) for i in s.items)
@@ -298,15 +319,23 @@ class _Graph:
 
     def _jump(self, s, entries: list) -> list:
         leave = isinstance(s, ast.Break)
+        return self.jump(leave, s.lineno, entries)
+
+    def jump(self, leave: bool, line: int, entries: list) -> list:
+        """break (leave the nearest loop or switch) or continue (the nearest loop)."""
         node = self.add("step", "break" if leave else "continue", "Leave the loop" if leave else "Skip to the next item",
-                        "Stop going round and leave the loop" if leave else "Skip ahead to the next one", s.lineno)
+                        "Stop going round and leave the loop" if leave else "Skip ahead to the next one", line)
         self.link(entries, node)
-        if not self.loops:
+        loops = [c for c in self.loops if c["loop"]]
+        target = self.loops[-1] if leave and self.loops else (loops[-1] if loops else None)
+        if target is None:
             return [(node, "")]
         if leave:
-            self.loops[-1]["breaks"].append((node, ""))
+            target["breaks"].append((node, ""))
+        elif target["head"] is not None:
+            self.link([(node, "")], target["head"])
         else:
-            self.link([(node, "")], self.loops[-1]["head"])
+            target["continues"].append((node, ""))
         return []
 
     def _match(self, s, entries: list) -> list:

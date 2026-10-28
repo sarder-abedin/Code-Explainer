@@ -29,7 +29,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install -e '.[dev,treesitter]' coverage
       # The browser test has its own job; skip it here.
-      - run: coverage run --source=code_explainer -m pytest --ignore=tests/test_ui.py --ignore=tests/test_ui_ai.py --ignore=tests/test_ui_ai_explain.py --ignore=tests/test_ui_ai_static.py --ignore=tests/test_ui_health.py
+      - run: coverage run --source=code_explainer -m pytest --ignore=tests/test_ui.py --ignore=tests/test_ui_ai.py --ignore=tests/test_ui_ai_explain.py --ignore=tests/test_ui_ai_static.py --ignore=tests/test_ui_health.py --ignore=tests/test_ui_chart.py
       - run: coverage report -m --fail-under=90
 
   no-treesitter:
@@ -42,7 +42,7 @@ jobs:
           python-version: "3.13"
       - run: pip install -e '.[dev]' coverage
       - run: python -c "import code_explainer.analysis.javascript_ts as t; assert not t.AVAILABLE"
-      - run: coverage run --source=code_explainer -m pytest --ignore=tests/test_ui.py --ignore=tests/test_ui_ai.py --ignore=tests/test_ui_ai_explain.py --ignore=tests/test_ui_ai_static.py --ignore=tests/test_ui_health.py -rs
+      - run: coverage run --source=code_explainer -m pytest --ignore=tests/test_ui.py --ignore=tests/test_ui_ai.py --ignore=tests/test_ui_ai_explain.py --ignore=tests/test_ui_ai_static.py --ignore=tests/test_ui_health.py --ignore=tests/test_ui_chart.py -rs
       - run: coverage report -m --fail-under=80
 
   ui:
@@ -59,7 +59,7 @@ jobs:
       - run: playwright install --with-deps chromium
       - name: Run the browser test (a skip counts as a failure)
         run: |
-          pytest tests/test_ui.py tests/test_ui_ai.py tests/test_ui_ai_explain.py tests/test_ui_ai_static.py tests/test_ui_health.py -q -rs | tee out.txt
+          pytest tests/test_ui.py tests/test_ui_ai.py tests/test_ui_ai_explain.py tests/test_ui_ai_static.py tests/test_ui_health.py tests/test_ui_chart.py -q -rs | tee out.txt
           ! grep -q skipped out.txt
 
   package:

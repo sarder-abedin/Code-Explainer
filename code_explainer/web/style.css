@@ -205,3 +205,28 @@ span.ai-cite.bad{color:var(--warn);text-decoration:line-through dotted;cursor:he
 .finding .fcode{margin:4px 0;padding:4px 8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .finding .fwhy,.finding .ffix{font-size:13px;margin-top:2px}.finding .ffix{color:var(--muted)}.finding.is-test{opacity:.7}
 .trow{margin:6px 0;font-size:13px}.nt{margin-left:6px}.card.chg .untested{color:var(--warn);margin:4px 0}
+
+/* Function flowcharts */
+.chartbtn{border:1px solid var(--line);font-size:12px;padding:1px 8px;color:var(--muted)}
+.symwrap .chartbtn{margin:0 0 6px 4.5em}
+.chart-overlay{position:fixed;inset:0;z-index:50;background:rgba(10,12,18,.55);display:flex;align-items:center;justify-content:center}
+.chart-box{background:var(--panel);border:1px solid var(--line);border-radius:10px;width:min(1280px,96vw);height:min(860px,92vh);display:flex;flex-direction:column;padding:10px 14px;gap:8px}
+.chart-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}.chart-head h2{margin:0;font-size:16px}
+.chart-tools{display:flex;gap:6px;flex-wrap:wrap}
+.fc-crumbs{font-size:12px;margin-top:4px}.fc-crumbs button{border:0;background:none;color:var(--accent);padding:0;cursor:pointer;text-decoration:underline}
+.chart-body{flex:1;min-height:0;display:flex;gap:12px}
+.chart-canvas{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+.fc-svg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.fc-info{width:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px}
+.fc-info textarea{width:100%;font:12px var(--mono)}.fc-calls{padding-left:16px;margin:4px 0}
+.fc-info button{margin:4px 4px 4px 0}.fc-note{color:var(--warn);font-size:13px}
+.fc-edge path{fill:none;stroke:var(--muted);stroke-width:1.4}.fc-back path{stroke-dasharray:5 4}.fc-arrowhead{fill:var(--muted)}
+.fc-elabel{font:11px var(--font);fill:var(--muted)}
+.fc-node{cursor:pointer;outline:none}.fc-node polygon,.fc-node rect{fill:var(--panel);stroke:var(--accent);stroke-width:1.4}
+.fc-node text{font:12px var(--font);fill:var(--ink);pointer-events:none}
+.fc-start rect,.fc-end rect{fill:var(--hover);stroke:var(--muted)}.fc-return rect{stroke:var(--ok)}.fc-raise rect{stroke:var(--warn)}
+.fc-handler rect,.fc-try rect{stroke-dasharray:4 3}.fc-more rect{stroke-dasharray:2 3;stroke:var(--muted)}
+.fc-node:hover polygon,.fc-node:hover rect,.fc-node:focus-visible polygon,.fc-node:focus-visible rect{stroke-width:2.6}
+.fc-node.sel polygon,.fc-node.sel rect{fill:var(--sel)}
+@media (max-width:800px){.chart-body{flex-direction:column}.fc-info{width:auto;max-height:34%}}
+.fc-info pre{white-space:pre-wrap;word-break:break-word}
