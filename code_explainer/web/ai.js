@@ -451,6 +451,9 @@ function aiFilePath() { return state.selected && BY.get(state.selected) ? state.
 function aiPaintChat() {
   const box = aiEl("ai-chat");
   if (!box) return;
+  // The tab refreshes itself in the background after it is drawn; typing must carry on where the person was.
+  const before = aiEl("ai-input");
+  const keep = before && document.activeElement === before ? { start: before.selectionStart, end: before.selectionEnd } : null;
   const input = h("textarea", { id: "ai-input", rows: 3, placeholder: "Ask about this code…", "aria-label": "Your question",
     oninput: e => { AI.chat.draft = e.target.value; aiPaintChatControls(); },
     onkeydown: e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); aiSend(); } } });
@@ -471,6 +474,7 @@ function aiPaintChat() {
         h("button", { id: "ai-chat-stop", hidden: true, onclick: aiStopAnswer }, "Stop")))));
   aiPaintLog();
   aiPaintChatControls();
+  if (keep && !input.disabled) { input.focus(); input.setSelectionRange(keep.start, keep.end); }
 }
 
 function aiPaintChatControls() {
