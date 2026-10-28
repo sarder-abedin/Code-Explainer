@@ -18,6 +18,7 @@ from .calls import resolve_calls, sym_id
 from .diff import compare, resolve_ref, snapshot, story_steps
 from .duplicates import find_duplicates
 from .flowgraph import apply_budget
+from . import architecture
 from .hygiene import scan as hygiene_scan
 from .testmap import annotate_changes, build_test_map
 from .resolve import py_index, resolve_imports
@@ -232,6 +233,7 @@ def _build(root: Path, name: str, churn_root: Path | None, explain: bool = True)
     if explain:   # the base snapshot of a change review only needs the structure
         data["tests"] = build_test_map(files)
         data["hygiene"] = hygiene_scan(files)
+        data["architecture"] = architecture.build(files, data["tests"], data["hygiene"])
     return data, files
 
 
