@@ -21,8 +21,8 @@ from .resolve import py_index, resolve_imports
 
 try:
     import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    tomllib = None  # type: ignore[assignment]
+except ModuleNotFoundError:  # Python 3.10: use the backport that pyproject.toml requires there
+    import tomli as tomllib
 
 MAX_SOURCE_BYTES = 300_000
 MAX_TOTAL_SOURCE_BYTES = 25_000_000
@@ -38,7 +38,7 @@ def _read(path: Path) -> str:
 def _declared_entry_points(root: Path, files: dict[str, FileInfo]) -> None:
     """Entry points declared in pyproject.toml / package.json."""
     pyproject = root / "pyproject.toml"
-    if tomllib and pyproject.is_file():
+    if pyproject.is_file():
         try:
             data = tomllib.loads(_read(pyproject))
         except Exception:

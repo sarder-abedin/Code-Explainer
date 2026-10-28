@@ -102,9 +102,9 @@ class _Ctx:
                 elif fn is not None:
                     chain = self.chain(fn)
                     if chain != ["?"]:
-                        found.append((chain, n.start_point[0] + 1, n.start_point[1]))
+                        found.append((chain, n.start_point[0] + 1, n.end_point))
             stack.extend(n.children)
-        found.sort(key=lambda c: (c[1], c[2]))
+        found.sort(key=lambda c: c[2])  # by end position: an inner call runs before the call using its result
         seen = {(tuple(c), l) for c, l in out}
         for chain, line, _col in found:
             if (tuple(chain), line) not in seen:
