@@ -5,4 +5,9 @@ build/
 dist/
 .venv/
 report.html
+<<<<<<< HEAD
 .venv/
+=======
+.coverage
+htmlcov/
+>>>>>>> d463bb8d5243d079dfa5128b0f90790d2dc68e3c

@@ -336,7 +336,7 @@ def explain_symbol(path: str, sym: Symbol, info: FileInfo, names: dict[str, str]
             "plain": "Top-level code that runs when the file is loaded or run directly.",
         }
     if sym.kind == "class":
-        methods = [s.name for s in info.symbols if s.kind == "method" and s.parent == sym.qual and not s.name.startswith("__")]
+        methods = [s.name for s in info.symbols if s.kind == "method" and s.parent == sym.qual and not s.name.startswith("_")]
         kid = [f"This is a recipe (a class) for making `{_readable(sym.name)}` things."]
         plain = [f"Class `{sym.name}`: a template for `{_readable(sym.name)}` objects."]
         if sym.doc:

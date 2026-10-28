@@ -73,3 +73,94 @@ def test_js_section_dividers_are_not_docs(tmp_path):
     (tmp_path / "a.js").write_text("// ---------- helpers ----------\nfunction h() {}\n// Real doc.\nfunction g() {}\n")
     f = by_path(analyze_repo(tmp_path))["a.js"]
     assert [s["doc"] for s in f["symbols"]] == ["", "Real doc."]
+
+
+import json
+
+from code_explainer import core
+
+
+def test_package_json_bin_and_poetry_scripts(tmp_path):
+    (tmp_path / "package.json").write_text(json.dumps({"main": "lib/index", "bin": {"tool": "./bin/cli.js"}}))
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib/index.js").write_text("function a() {}\n")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/cli.js").write_text("function b() {}\n")
+    (tmp_path / "pyproject.toml").write_text("[tool.poetry.scripts]\nrun = 'svc.app:start'\n")
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc/app.py").write_text("def start():\n    pass\n")
+    f = by_path(analyze_repo(tmp_path))
+    assert f["lib/index.js"]["entry"] == ["package.json main"]
+    assert f["bin/cli.js"]["entry"] == ["package.json bin `tool`"]
+    assert f["svc/app.py"]["entry"] == ["console script `run` (pyproject.toml)"]
+    assert next(s for s in f["svc/app.py"]["symbols"] if s["name"] == "start")["entry"] == "console script `run`"
+
+
+def test_malformed_manifests_do_not_break_analysis(tmp_path):
+    (tmp_path / "package.json").write_text("{not json")
+    (tmp_path / "pyproject.toml").write_text("= broken")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    assert analyze_repo(tmp_path)["repo"]["files"] == 3
+
+
+def test_large_files_are_analysed_but_not_embedded(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "MAX_SOURCE_BYTES", 50)
+    (tmp_path / "big.py").write_text("def f():\n    pass\n" + "# pad\n" * 30)
+    f = by_path(analyze_repo(tmp_path))["big.py"]
+    assert f["truncated"] and f["source"] == "" and [s["name"] for s in f["symbols"]] == ["f"]
+
+
+def test_total_source_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "MAX_TOTAL_SOURCE_BYTES", 30)
+    for n in "abc":
+        (tmp_path / f"{n}.py").write_text("x = 1\n" * 3)  # 18 bytes each
+    f = by_path(analyze_repo(tmp_path))
+    assert sum(1 for x in f.values() if x["source"]) == 1 and sum(1 for x in f.values() if x["truncated"]) == 2
+
+
+def test_test_file_detection_and_unused_rules(tmp_path):
+    write = lambda p, t: ((tmp_path / p).parent.mkdir(parents=True, exist_ok=True), (tmp_path / p).write_text(t))
+    for p in ("tests/a.py", "pkg/test_b.py", "pkg/c_test.py", "web/x.spec.ts", "src/__tests__/y.js", "conftest.py"):
+        write(p, "def f():\n    pass\n")
+    write("pkg/orphan.py", "def f():\n    pass\n")
+    write("pkg/__init__.py", "")
+    f = by_path(analyze_repo(tmp_path))
+    assert all(f[p]["isTest"] for p in ("tests/a.py", "pkg/test_b.py", "pkg/c_test.py", "web/x.spec.ts", "src/__tests__/y.js", "conftest.py"))
+    assert not f["pkg/orphan.py"]["isTest"] and f["pkg/orphan.py"]["unused"]
+    assert not f["pkg/__init__.py"]["unused"] and not any(f[p]["unused"] for p in f if f[p]["isTest"])
+
+
+def test_reading_order_falls_back_to_central_files(tmp_path):
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib/core.py").write_text("x = 1\n")
+    (tmp_path / "lib/a.py").write_text("from lib import core\n")
+    (tmp_path / "lib/b.py").write_text("from lib import core\n")
+    d = analyze_repo(tmp_path)
+    assert [o["path"] for o in d["readingOrder"]] == ["lib/core.py"] and "2 files" in d["readingOrder"][0]["why"]
+
+
+def test_empty_repository(tmp_path):
+    d = analyze_repo(tmp_path)
+    assert d["repo"]["files"] == 0 and d["files"] == [] and d["flowRoots"] == []
+    assert d["explain"]["story"][0]["title"]["plain"] == "Overview"
+
+
+def test_pyproject_scripts_work_without_tomllib(tmp_path):
+    """Python 3.10 has no tomllib; console scripts must still be found through the tomli backport."""
+    import subprocess
+    import sys
+    pytest = __import__("pytest")
+    pytest.importorskip("tomli")
+    (tmp_path / "pyproject.toml").write_text("[project.scripts]\nrun = 'svc.app:start'\n")
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc/app.py").write_text("def start():\n    pass\n")
+    code = (
+        "import sys; sys.modules['tomllib'] = None\n"  # `import tomllib` now raises ImportError, as on 3.10
+        "from code_explainer.core import analyze_repo\n"
+        f"d = analyze_repo({str(tmp_path)!r})\n"
+        "f = {x['path']: x for x in d['files']}\n"
+        "print(f['svc/app.py']['entry'])\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "console script `run`" in out.stdout
