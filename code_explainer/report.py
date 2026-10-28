@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 
 WEB = Path(__file__).parent / "web"
-AI_MARKER = "// @@AI@@"
+# Scripts spliced into app.js at their marker, so they share one closure in a single-file page.
+SPLICES = {"// @@AI@@": "ai.js", "// @@HEALTH@@": "health.js"}
 
 
 def _read(name: str) -> str:
@@ -21,11 +22,13 @@ def _json_for_script(data: dict) -> str:
 
 
 def _script() -> str:
-    """app.js with ai.js spliced in at its marker, so both share one closure in a single-file page."""
-    app, ai = _read("app.js"), _read("ai.js")
-    if app.count(AI_MARKER) != 1:
-        raise RuntimeError("app.js must contain the AI marker exactly once")
-    return app.replace(AI_MARKER, ai)
+    """app.js with its extra scripts spliced in."""
+    app = _read("app.js")
+    for marker, name in SPLICES.items():
+        if app.count(marker) != 1:
+            raise RuntimeError(f"app.js must contain {marker} exactly once")
+        app = app.replace(marker, _read(name))
+    return app
 
 
 def render_html(data: dict, serve: dict | None = None) -> str:
