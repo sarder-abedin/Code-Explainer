@@ -48,3 +48,27 @@ def test_report_renders_and_navigates(tmp_path):
         assert "pricing.py" in page.evaluate("location.hash")
         assert errors == []
         browser.close()
+
+
+def test_changes_tab(repo, tmp_path):
+    out = tmp_path / "c.html"
+    out.write_text(render_html(analyze_repo(repo, "r", base="HEAD~1", head="HEAD")), encoding="utf-8")
+    with sync_api.sync_playwright() as p:
+        try:
+            exe = os.environ.get("CHROMIUM_PATH")
+            browser = p.chromium.launch(executable_path=exe, args=["--no-sandbox"]) if exe else p.chromium.launch()
+        except Exception as e:
+            pytest.skip(str(e))
+        page = browser.new_page(viewport={"width": 1300, "height": 900})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(out.as_uri())
+        page.click("[data-tab=changes]")
+        page.wait_for_selector(".card.chg")
+        assert page.locator("text=Double-check these").count()
+        page.click("text=Show the changes >> nth=0")
+        assert page.locator(".patch .add").count() > 0
+        page.click("[data-tab=treemap]")
+        assert page.locator("select option[value=changed]").count() == 1
+        assert errors == []
+        browser.close()

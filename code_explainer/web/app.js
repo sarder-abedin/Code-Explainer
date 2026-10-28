@@ -13,7 +13,7 @@ function h(tag, attrs, ...kids) {
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (v !== false && v != null) el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid);
   return el;
 }
 function s(tag, attrs, ...kids) {
@@ -22,7 +22,7 @@ function s(tag, attrs, ...kids) {
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid);
   return el;
 }
 const fmt = n => n.toLocaleString();
@@ -44,7 +44,8 @@ const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
 const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
 // `code` spans in generated text become <code> elements.
 const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
-const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+const CH = D.changes || null;
+const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: CH ? "changed" : "lang", tmRoot: "", expanded: new Set(),
   flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
@@ -78,6 +79,7 @@ function renderShell() {
   const brand = document.getElementById("brand");
   brand.replaceChildren(r.name, h("small", {}, `${fmt(r.files)} files · ${fmt(r.loc)} lines` + (r.git && r.git.head ? ` · ${r.git.head}` : "")));
   for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => setTab(b.dataset.tab);
+  document.querySelector('#tabs [data-tab="changes"]').hidden = !CH;
   const sel = document.getElementById("level");
   sel.value = LEVEL;
   sel.onchange = () => { LEVEL = sel.value; try { localStorage.setItem("ce.level", LEVEL); } catch (e) { /* ignore */ } renderAll(); };
@@ -86,7 +88,7 @@ function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ story: renderStory, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ story: renderStory, changes: renderChanges, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
@@ -116,6 +118,52 @@ function renderStory(view) {
   view.append(dots, card, h("p", { class: "hint" },
     "Everything here is worked out from the code itself: names, comments, who borrows from whom, who asks whom for help. "
     + "When something is only a guess from a name, the text says so. Use the “Explain” menu at the top to change how it is told."));
+  markSelected();
+}
+
+// ---------- changes (review of a diff) ----------
+const STATUS = { A: ["new", "ok"], M: ["changed", ""], D: ["removed", "warn"], R: ["moved", ""] };
+function diffEl(patch) {
+  return h("pre", { class: "patch" }, patch.split("\n").map(line => h("span", { class: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "" }, line + "\n")));
+}
+function renderChanges(view) {
+  const s = CH.summary;
+  const card = (n, l) => h("div", { class: "card" }, h("div", { class: "n" }, String(n)), h("div", { class: "l" }, l));
+  view.append(
+    h("p", { class: "hint", style: "margin-top:0" }, `Comparing ${CH.base} → ${CH.head}`),
+    h("div", { class: "grid" },
+      card(s.files, `files touched (${s.added} new, ${s.modified} changed, ${s.deleted} removed)`),
+      card(`+${fmt(s.linesAdded)} / −${fmt(s.linesDeleted)}`, "lines"),
+      card(s.impactedFiles, "other files that depend on the change"),
+      card((s.complexityDelta > 0 ? "+" : "") + s.complexityDelta, "complexity change"),
+      card(s.newDead + s.risks + s.newDuplicates, "things to double-check")));
+  const flags = [];
+  for (const r of CH.risks) flags.push(h("li", { onclick: () => BY.has(r.what.split("::")[0]) ? openFile(r.what.split("::")[0]) : null },
+    h("span", { class: "badge warn" }, "removed but used"), h("span", {}, h("span", { class: "p" }, r.what), h("span", { class: "why" }, `${r.why}: ${r.users.join(", ")}`))));
+  for (const d of CH.newDead) flags.push(h("li", { onclick: () => BY.has(d.path) && openFile(d.path, d.line) },
+    h("span", { class: "badge warn" }, d.kind === "orphaned" ? "lost its caller" : d.kind === "unused-file" ? "unused file" : "unused"), h("span", {}, h("span", { class: "p" }, `${d.path}${d.qual ? " → " + d.qual : ""}`), h("span", { class: "why" }, d.why))));
+  for (const g of CH.newDuplicates) flags.push(h("li", { onclick: () => BY.has(g.members[0].path) && openFile(g.members[0].path, g.members[0].line) },
+    h("span", { class: "badge warn" }, "copy-paste"), h("span", {}, h("span", { class: "p" }, g.members.map(m => m.qual).join(" = ")), h("span", { class: "why" }, `${g.lines} identical lines in ${g.members.map(m => base(m.path)).join(", ")}`))));
+  if (flags.length) view.append(h("h2", {}, "Double-check these", h("small", {}, "possible leftovers and risks")), h("ul", { class: "list" }, flags));
+  if (CH.reach.length) view.append(h("h2", {}, "Runs from", h("small", {}, "starting points that can reach the changed code")),
+    h("ul", { class: "list" }, CH.reach.map(r => h("li", { onclick: () => { state.flowRoot = r.root; state.flowOpen.clear(); setTab("flow"); } },
+      h("span", {}, h("span", { class: "p" }, r.name), h("span", { class: "why" }, `${r.why.replace(/`/g, "")} · reaches ${r.count} changed ${r.count === 1 ? "function" : "functions"}`))))));
+  view.append(h("h2", {}, "Read in this order", h("small", {}, "the riskiest and most connected first, tests last")));
+  CH.reviewOrder.forEach((path, i) => {
+    const e = CH.files[path], st = STATUS[e.status] || ["changed", ""];
+    const open = state.patchOpen && state.patchOpen.has(path);
+    const sy = e.symbols;
+    view.append(h("div", { class: "card chg" },
+      h("div", { class: "chead" }, h("span", { class: "num" }, String(i + 1)), h("span", { class: "badge " + st[1] }, st[0]),
+        h("a", { class: "link", style: "display:inline", onclick: () => BY.has(path) && openFile(path) }, e.oldPath ? `${e.oldPath} → ${path}` : path),
+        h("span", { class: "loc" }, `+${e.added} / −${e.deleted}`)),
+      h("div", { class: "chips" }, e.why.map(w => h("span", { class: "badge" }, w))),
+      LEVEL !== "tech" ? h("div", { class: "simple" }, rich(T(e.explain))) : h("div", { class: "hint" },
+        ["added", "modified", "removed"].filter(k => sy[k].length).map(k => `${k}: ${sy[k].join(", ")}`).join(" · ")),
+      e.blast.length ? h("div", { class: "hint" }, "Affects: ", e.blast.slice(0, 8).map((b, j) => [j ? ", " : "", h("a", { class: "link", style: "display:inline", onclick: () => BY.has(b.path) && openFile(b.path) }, base(b.path) + (b.distance > 1 ? ` (${b.distance} steps away)` : ""))]), e.blast.length > 8 ? ` and ${e.blast.length - 8} more` : "") : null,
+      h("button", { onclick: () => { state.patchOpen = state.patchOpen || new Set(); open ? state.patchOpen.delete(path) : state.patchOpen.add(path); renderAll(); } }, open ? "Hide the changes" : "Show the changes"),
+      open ? (e.binary ? h("div", { class: "hint" }, "Binary file.") : diffEl(e.patch)) : null));
+  });
   markSelected();
 }
 
@@ -166,6 +214,10 @@ function renderOverview(view) {
       listOf("Possibly unused", "no file imports these and they are not entry points",
         FILES.filter(f => f.unused).sort((a, b) => b.loc - a.loc).slice(0, 10)
           .map(f => fileRow(f, null, `${fmt(f.loc)} lines`))),
+      D.duplicates && D.duplicates.length ? listOf("Copy-pasted code", "identical function bodies in several places",
+        D.duplicates.slice(0, 8).map(g => h("li", { tabindex: 0, onclick: () => openFile(g.members[0].path, g.members[0].line) },
+          h("span", {}, h("span", { class: "p" }, g.members.map(m => m.qual).join(" = ")),
+            h("span", { class: "why" }, `${g.lines} lines × ${g.members.length} copies · ${g.members.map(m => base(m.path)).join(", ")}`))))) : null,
       r.hasHistory ? listOf("Most changed", "commits touching the file",
         FILES.filter(f => f.churn).sort((a, b) => b.churn - a.churn).slice(0, 10)
           .map(f => fileRow(f, null, `${f.churn} commits`))) : null),
@@ -182,6 +234,7 @@ const METRICS = {
   fanin: { label: "Imported by", val: f => f.importedBy.length },
   unused: { label: "Possibly unused" },
 };
+if (CH) METRICS.changed = { label: "Changed in this review" };
 function buildTree(prefix) {
   const root = { name: prefix || D.repo.name, path: prefix, children: new Map(), dir: true };
   for (const f of FILES) {
@@ -232,6 +285,10 @@ function squarify(items, x, y, w, hgt) {
 function tileColor(f) {
   const m = state.colorBy;
   if (m === "lang") return { fill: LANG_COLOR[f.lang] || "#999", op: 0.85 };
+  if (m === "changed") {
+    const c = CH.files[f.path];
+    return c ? { fill: c.status === "A" ? "#2e9e5b" : "#e0a030", op: 0.95 } : { fill: "#888", op: 0.12 };
+  }
   if (m === "unused") return f.unused ? { fill: "#e15759", op: 0.9 } : { fill: "#888", op: 0.15 };
   const mx = METRICS[m].max;
   const t = Math.sqrt(Math.min(1, METRICS[m].val(f) / mx));
@@ -289,6 +346,7 @@ function renderTreemap(view) {
 function clip(text, w) { const n = Math.max(1, Math.floor((w - 8) / 6.2)); return text.length > n ? text.slice(0, Math.max(1, n - 1)) + "…" : text; }
 function legendFor() {
   if (state.colorBy === "lang") return h("div", { class: "legend hint" }, langs.slice(0, 10).map(([n]) => h("span", {}, h("i", { class: "dot", style: `background:${LANG_COLOR[n]}` }), n)));
+  if (state.colorBy === "changed") return h("div", { class: "hint legend" }, h("span", {}, h("i", { class: "dot", style: "background:#2e9e5b" }), "new file"), h("span", {}, h("i", { class: "dot", style: "background:#e0a030" }), "changed or moved"), h("span", {}, "grey = untouched"));
   if (state.colorBy === "unused") return h("div", { class: "hint" }, "Red = no other file imports it and it is not an entry point.");
   return h("div", { class: "hint" }, `Darker = higher ${METRICS[state.colorBy].label.toLowerCase()} (max ${fmt(METRICS[state.colorBy].max)}).` +
     (state.colorBy === "churn" && !D.repo.hasHistory ? " No git history was available." : ""));
@@ -535,6 +593,8 @@ function renderDetail() {
   if (f.entry.length) badges.push(h("span", { class: "badge ok", title: f.entry.join("; ") }, "entry point"));
   if (f.isTest) badges.push(h("span", { class: "badge" }, "test"));
   if (f.unused) badges.push(h("span", { class: "badge warn", title: "No file imports this and it is not an entry point" }, "possibly unused"));
+  const chg = CH && CH.files[f.path];
+  if (chg) badges.push(h("span", { class: "badge ok", title: chg.why.join("; ") }, "changed in this review"));
   if (f.parseError) badges.push(h("span", { class: "badge warn", title: f.parseError }, "parse error"));
   const m = (n, l) => h("div", {}, h("b", {}, String(n)), h("span", {}, l));
   const links = (arr, empty) => arr.length ? arr.map(p => h("a", { class: "link", tabindex: 0, onclick: () => openFile(p), onkeydown: e => { if (e.key === "Enter") openFile(p); } }, p)) : h("span", { class: "empty", style: "padding:0" }, empty);
@@ -557,6 +617,7 @@ function renderDetail() {
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
+      chg ? h("div", { class: "dsec" }, h("h3", {}, `What changed (+${chg.added} / −${chg.deleted})`), diffEl(chg.patch)) : null,
       h("div", { class: "dsec" }, h("h3", {}, `Symbols (${f.symbols.length})`), syms),
       h("div", { class: "dsec" }, h("h3", {}, `Imports (${f.imports.length})`), links(f.imports, "Imports nothing from this repo.")),
       h("div", { class: "dsec" }, h("h3", {}, `Imported by (${f.importedBy.length})`), links(f.importedBy, "Nothing imports this file.")),

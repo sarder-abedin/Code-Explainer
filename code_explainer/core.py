@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import posixpath
 import re
@@ -14,6 +15,8 @@ from .ingest import git_churn, git_summary, list_files
 from .model import FileInfo
 from .explain import explain_repo
 from .calls import resolve_calls, sym_id
+from .diff import compare, resolve_ref, snapshot, story_steps
+from .duplicates import find_duplicates
 from .resolve import py_index, resolve_imports
 
 try:
@@ -162,7 +165,8 @@ def _flow_roots(files: dict[str, FileInfo]) -> list[dict]:
     return sorted(roots.values(), key=lambda r: (rank[r["kind"]], r["path"], r["name"]))
 
 
-def analyze_repo(root: Path, name: str | None = None) -> dict:
+def _build(root: Path, name: str, churn_root: Path | None, explain: bool = True) -> tuple[dict, dict[str, FileInfo]]:
+    """Analyse one snapshot of a repository on disk."""
     root = Path(root)
     files: dict[str, FileInfo] = {}
     budget = MAX_TOTAL_SOURCE_BYTES
@@ -180,7 +184,7 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
             info.truncated = True
         files[rel] = info
 
-    churn = git_churn(root)
+    churn = git_churn(churn_root) if churn_root else None
     if churn:
         for p, n in churn.items():
             if p in files:
@@ -199,23 +203,46 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
         entry["loc"] += f.loc
     edges = [[f.path, t] for f in files.values() for t in f.imports]
     repo = {
-        "name": name or root.name,
+        "name": name,
         "files": len(files),
         "loc": sum(f.loc for f in files.values()),
         "languages": langs,
         "hasHistory": churn is not None,
-        "git": git_summary(root),
+        "git": git_summary(churn_root) if churn_root else {},
     }
     reading_order = _reading_order(files)
     flow_roots = _flow_roots(files)
-    explain = explain_repo(files, flow_roots, reading_order, repo)
-    return {
+    explained = explain_repo(files, flow_roots, reading_order, repo) if explain else {}
+    data = {
         "version": __version__,
         "repo": repo,
         "files": [files[p].to_dict() for p in sorted(files)],
         "edges": edges,
         "readingOrder": reading_order,
         "flowRoots": flow_roots,
-        "explain": explain,
+        "explain": explained,
         "callStats": call_stats,
+        "duplicates": find_duplicates(files)[:25],
     }
+    return data, files
+
+
+def analyze_repo(root: Path, name: str | None = None, base: str | None = None, head: str | None = None) -> dict:
+    """Analyse a repository. With `base`, also review the change from `base` to
+    `head` (or to the working tree when `head` is not given)."""
+    root = Path(root)
+    name = name or root.name
+    with contextlib.ExitStack() as stack:
+        src = root
+        if head:
+            resolve_ref(root, head)
+            src = stack.enter_context(snapshot(root, head))
+        data, files = _build(src, name, churn_root=root)
+        if base:
+            resolve_ref(root, base)
+            base_root = stack.enter_context(snapshot(root, base))
+            _, base_files = _build(base_root, name, churn_root=None, explain=False)
+            changes = compare(root, base, head, base_files, files, data["flowRoots"])
+            data["changes"] = changes
+            data["explain"]["story"][1:1] = story_steps(changes)
+    return data
