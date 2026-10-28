@@ -166,6 +166,7 @@ function renderChanges(view) {
       LEVEL !== "tech" ? h("div", { class: "simple" }, rich(T(e.explain))) : h("div", { class: "hint" },
         ["added", "modified", "removed"].filter(k => sy[k].length).map(k => `${k}: ${sy[k].join(", ")}`).join(" · ")),
       e.blast.length ? h("div", { class: "hint" }, "Affects: ", e.blast.slice(0, 8).map((b, j) => [j ? ", " : "", h("a", { class: "link", style: "display:inline", onclick: () => BY.has(b.path) && openFile(b.path) }, base(b.path) + (b.distance > 1 ? ` (${b.distance} steps away)` : ""))]), e.blast.length > 8 ? ` and ${e.blast.length - 8} more` : "") : null,
+      aixControls({ kind: "change", path }),
       h("button", { onclick: () => { state.patchOpen = state.patchOpen || new Set(); open ? state.patchOpen.delete(path) : state.patchOpen.add(path); renderAll(); } }, open ? "Hide the changes" : "Show the changes"),
       open ? (e.binary ? h("div", { class: "hint" }, "Binary file.") : diffEl(e.patch)) : null));
   });
@@ -596,7 +597,8 @@ function stepCard(r, vis) {
     h("div", { class: "t" }, "Now running: ", h("b", {}, symLabel(r.sym)), h("span", { class: "loc" }, ` ${r.file.path}:${r.sym.line}`)),
     parent ? h("div", { class: "hint" }, `Called by ${symLabel(parent.sym)} at line ${r.via}.`) : h("div", { class: "hint" }, "This is where it starts."),
     LEVEL !== "tech" && r.sym.explain ? h("div", { class: "simple" }, rich(T(r.sym.explain))) : (r.sym.doc ? h("div", {}, r.sym.doc) : null),
-    src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null);
+    src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null,
+    aixControls({ kind: "flow", path: r.file.path, symbol: r.sym.qual, parent: parent ? `${parent.file.path}::${parent.sym.qual}` : undefined }));
 }
 
 // ---------- detail panel ----------
@@ -619,7 +621,8 @@ function renderDetail() {
     h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = state.symOpen === f.path + "::" + sym.qual ? "" : f.path + "::" + sym.qual; openFile(f.path, sym.line); } },
       h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
       h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
-    LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null)) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
+    LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null,
+    aixControls({ kind: "symbol", path: f.path, symbol: sym.qual }, true))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
   const code = h("div", { class: "code", id: "code" });
   const lines = f.source ? f.source.split("\n") : [];
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
@@ -632,6 +635,7 @@ function renderDetail() {
       h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null),
     h("div", { class: "dbody" },
       progressControls(f),
+      (ex => (ex ? h("div", { class: "dsec" }, ex) : null))(aixControls({ kind: "file", path: f.path })),
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,

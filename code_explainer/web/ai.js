@@ -202,7 +202,25 @@ function aiPaintAdd() {
         h("label", {}, h("input", { type: "checkbox", id: "ai-allow-remote", checked: st.allow_remote,
           onchange: e => aiQueueSave({ allow_remote: e.target.checked }).then(aiPaintAdd) }), " Allow servers on other computers"),
         h("div", { id: "ai-remote-warning", class: "ai-error", hidden: !st.allow_remote },
-          "Warning: with this on, Code Explainer can send your code to servers on other computers. Only add servers you trust."))));
+          "Warning: with this on, Code Explainer can send your code to servers on other computers. Only add servers you trust."),
+        h("div", { class: "ai-cacherow" }, h("span", { id: "ai-cache-info", class: "hint" }, "Saved explanations: …"),
+          h("button", { id: "ai-cache-clear", onclick: aiClearCache }, "Clear"),
+          h("div", { class: "hint" }, "Explanations are saved on this computer (not in your project) so coming back is instant. "
+            + "They are reused only while the code, model, settings and reading level are unchanged.")))));
+  aiCacheRefresh();
+}
+
+async function aiCacheRefresh() {
+  try {
+    const c = await aiApi("/api/ai/cache");
+    const el = aiEl("ai-cache-info");
+    if (el) el.textContent = `${c.entries} saved explanation${c.entries === 1 ? "" : "s"} (${aiBytes(c.bytes) || "0 KB"})`;
+  } catch (e) { /* the server may be busy; the next repaint tries again */ }
+}
+
+async function aiClearCache() {
+  try { await aiApi("/api/ai/cache/clear", {}); toast("Saved explanations cleared."); } catch (e) { toast(e.message); }
+  aiCacheRefresh();
 }
 
 async function aiAddServer(provider, urlText, name, keyEnv) {
@@ -380,6 +398,12 @@ function aiResolveCite(name, line) {
 
 function aiOpenCode(path, line) { openFile(path, line); }
 
+function aiSourceChips(sources) {
+  return h("div", { class: "ai-sources" }, h("span", { class: "hint" }, "Based on: "),
+    sources.map(src => h("a", { class: "ai-source", href: "#", title: src.reason,
+      onclick: e => { e.preventDefault(); aiOpenCode(src.path, src.line); } }, `${src.path}:${src.line}-${src.end} ${src.label}`)));
+}
+
 function aiCiteNodes(text) {
   const out = [];
   let last = 0;
@@ -473,12 +497,7 @@ function aiMessageEl(m) {
   if (m.role === "assistant") {
     if (m.thinking && !m.text && !m.done) el.append(h("div", { class: "hint ai-thinking" }, "Thinking…"));
     if (m.retrievalNote) el.append(h("div", { class: "ai-retrieval hint" }, m.retrievalNote));
-    if (m.sent && m.sent.sources && m.sent.sources.length) {
-      el.append(h("div", { class: "ai-sources" }, h("span", { class: "hint" }, "Based on: "),
-        m.sent.sources.map(src => h("a", { class: "ai-source", href: "#", title: src.reason,
-          onclick: e => { e.preventDefault(); aiOpenCode(src.path, src.line); } },
-          `${src.path}:${src.line}-${src.end} ${src.label}`))));
-    }
+    if (m.sent && m.sent.sources && m.sent.sources.length) el.append(aiSourceChips(m.sent.sources));
     if (m.note) el.append(h("div", { class: `ai-note ${m.note.kind}` }, m.note.text));
     if (m.stats) el.append(h("div", { class: "ai-stats hint" }, m.stats));
     if (m.sent) {
@@ -507,6 +526,22 @@ function aiClear() {
   AI.chat.messages = []; AI.chat.sentOpen.clear(); aiPaintLog();
 }
 
+// Reads a server-sent-events response to its end, calling onEvent for each `data:` payload that parses.
+async function aiReadSSE(response, onEvent) {
+  const reader = response.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, i); buf = buf.slice(i + 2);
+      for (const line of block.split("\n")) if (line.startsWith("data:")) { try { onEvent(JSON.parse(line.slice(5))); } catch (e) { /* skip a bad event */ } }
+    }
+  }
+}
+
 async function aiSend() {
   const input = aiEl("ai-input");
   const text = (input ? input.value : AI.chat.draft).trim();
@@ -531,18 +566,7 @@ async function aiSend() {
       try { msg = (await r.json()).error || msg; } catch (e) { /* keep status */ }
       throw new Error(msg);
     }
-    const reader = r.body.getReader(), dec = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const block = buf.slice(0, i); buf = buf.slice(i + 2);
-        for (const line of block.split("\n")) if (line.startsWith("data:")) { try { aiOnEvent(cur, JSON.parse(line.slice(5))); } catch (e) { /* skip a bad event */ } }
-      }
-    }
+    await aiReadSSE(r, ev => aiOnEvent(cur, ev));
   } catch (e) {
     if (e.name === "AbortError") cur.note = cur.note || { kind: "info", text: "Stopped." };
     else cur.note = { kind: "error", text: "Lost the connection: " + e.message };
@@ -597,4 +621,146 @@ function aiStopAnswer() {
   cur.note = { kind: "info", text: "Stopped." };
   if (cur.rid) aiApi("/api/ai/cancel", { id: cur.rid }).catch(() => { /* aborting the request below stops it anyway */ });
   if (AI.chat.ctl) AI.chat.ctl.abort();
+}
+
+
+// ---------- "Explain with AI" buttons (files, functions, flow steps, changes) ----------
+// Results live in AIX, keyed by what is explained and the reading level, so they survive the panels being redrawn.
+// The browser only names the target; the server builds the prompt, and saved answers are reused (even with the AI stopped).
+const AIX = new Map();
+const aixKey = t => [LEVEL, t.kind, t.path, t.symbol || "", t.parent || ""].join("|");
+
+function aixControls(target, compact) {
+  if (!SERVE) return null;
+  if ((target.kind === "symbol" || target.kind === "flow") && (!target.symbol || target.symbol === "<module>")) return null;
+  const el = h("div", { class: "aix", "data-aix": aixKey(target) });
+  el._target = target; el._compact = !!compact;
+  aixFill(el);
+  return el;
+}
+
+function aixFill(el) {
+  el.replaceChildren(...aixBody(el._target, aixKey(el._target), el._compact));
+}
+
+function aixPaint(key) {
+  for (const el of document.querySelectorAll("[data-aix]")) if (el.dataset.aix === key && el._target) aixFill(el);
+}
+
+function aixPaintText(key, st) {
+  for (const el of document.querySelectorAll("[data-aix]")) {
+    if (el.dataset.aix !== key) continue;
+    const box = el.querySelector(".aix-text");
+    if (box) { box.replaceChildren(); aiRenderText(box, st.text); }
+  }
+}
+
+function aixBody(target, key, compact) {
+  const st = AIX.get(key);
+  if (!st) return [h("button", { class: "aix-btn" + (compact ? " compact" : ""), "data-kind": target.kind, title: "Explain with the local AI",
+    onclick: () => aixRun(target, key, false) }, compact ? "✨ Explain" : (target.kind === "change" ? "✨ Explain this change with AI" : "✨ Explain with AI"))];
+  const text = h("div", { class: "aix-text" });
+  aiRenderText(text, st.text);
+  const box = h("div", { class: "aix-box" });
+  if (st.state === "running" && !st.text) box.append(h("div", { class: "hint aix-working" }, st.step || (st.thinking ? "Thinking…" : "Waiting for the model…")));
+  if (st.text) box.append(text);
+  if (st.note) box.append(h("div", { class: `aix-note ${st.note.kind}` }, st.note.text));
+  if (st.sources.length) box.append(aiSourceChips(st.sources));
+  const foot = h("div", { class: "aix-foot" });
+  if (st.cached) foot.append(h("span", { class: "badge ok aix-cached", title: "Shown from a saved answer; the model was not used" }, "saved answer"));
+  if (st.stats) foot.append(h("span", { class: "hint aix-stats" }, st.stats));
+  if (st.state === "running") foot.append(h("button", { class: "aix-stop", onclick: () => aixStop(key) }, "Stop"));
+  else {
+    foot.append(h("button", { class: st.state === "done" ? "aix-regen" : "aix-btn", "data-kind": target.kind,
+      onclick: () => aixRun(target, key, true) }, st.state === "done" ? "Regenerate" : "Try again"));
+    if (st.notReady) {
+      if (st.selected) foot.append(h("button", { class: "aix-start", onclick: () => aixStartThenRun(target, key) }, `Start AI with ${st.selected.model} and explain`));
+      foot.append(h("button", { class: "aix-open", onclick: () => setTab("ai") }, "Open the AI tab"));
+    }
+    foot.append(h("button", { class: "aix-hide", onclick: () => { AIX.delete(key); aixPaint(key); } }, "Hide"));
+  }
+  box.append(foot);
+  return [box];
+}
+
+async function aixRun(target, key, regenerate) {
+  const st = { state: "running", text: "", sources: [], note: null, cached: false, stats: "", rid: "", ctl: new AbortController(),
+    thinking: false, step: "", notReady: false, selected: null };
+  AIX.set(key, st);
+  aixPaint(key);
+  try {
+    const r = await fetch("/api/ai/explain", { method: "POST", headers: { "Content-Type": "application/json" }, signal: st.ctl.signal,
+      body: JSON.stringify({ ...target, regenerate: !!regenerate, params: { level: LEVEL } }) });
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { msg = (await r.json()).error || msg; } catch (e) { /* keep status */ }
+      throw new Error(msg);
+    }
+    await aiReadSSE(r, ev => aixOnEvent(st, key, ev));
+  } catch (e) {
+    if (e.name === "AbortError") { st.note = st.note || { kind: "info", text: "Stopped." }; st.state = "stopped"; }
+    else { st.note = { kind: "error", text: "Lost the connection: " + e.message }; st.state = "error"; }
+  }
+  if (st.state === "running") st.state = "done";
+  if (st.notReady) {
+    try { const sel = (await aiApi("/api/ai/settings")).settings.selected; st.selected = sel && sel.model ? sel : null; } catch (e) { /* no remembered model */ }
+  }
+  aixPaint(key);
+}
+
+function aixOnEvent(st, key, ev) {
+  switch (ev.type) {
+    case "start": st.sources = ev.sources || []; st.cached = !!ev.cached; st.rid = ev.id; aixPaint(key); break;
+    case "thinking": st.thinking = true; aixPaint(key); break;
+    case "token": st.text += ev.text; if (st.text.length === ev.text.length) aixPaint(key); else aixPaintText(key, st); break;
+    case "done": {
+      st.state = "done"; st.cached = !!ev.cached;
+      const s = ev.stats || {}, bits = [];
+      if (s.completion_tokens) bits.push(`${s.completion_tokens} tokens`);
+      if (s.tokens_per_second) bits.push(`${s.tokens_per_second} tokens/s`);
+      if (!st.cached && ev.elapsed != null) bits.push(`${ev.elapsed} s`);
+      st.stats = bits.join(" · ") || "done";
+      if (ev.truncated) st.note = { kind: "warn", text: "The answer was cut off at the length limit. Raise “Max answer length” in the AI settings and try again." };
+      aixPaint(key); break;
+    }
+    case "error":
+      st.state = "error"; st.notReady = ev.kind === "not_ready";
+      st.note = { kind: "error", text: ev.message + (ev.hint ? ` ${ev.hint}` : "") };
+      break;
+    case "cancelled": st.note = { kind: "info", text: "Stopped." }; st.state = "stopped"; break;
+    default: break;
+  }
+}
+
+function aixStop(key) {
+  const st = AIX.get(key);
+  if (!st || st.state !== "running") return;
+  st.note = { kind: "info", text: "Stopped." };
+  if (st.rid) aiApi("/api/ai/cancel", { id: st.rid }).catch(() => { /* aborting the request stops it anyway */ });
+  st.ctl.abort();
+}
+
+// One click: start the remembered model, wait for it, then explain.
+async function aixStartThenRun(target, key) {
+  const st = AIX.get(key);
+  if (!st || !st.selected) return;
+  const sel = st.selected;
+  st.state = "running"; st.text = ""; st.note = null; st.notReady = false; st.step = `Starting ${sel.model}…`;
+  aixPaint(key);
+  try {
+    AI.status = await aiApi("/api/ai/start", sel);
+    const end = Date.now() + 180000;
+    while (Date.now() < end) {
+      AI.status = await aiApi("/api/ai/status");
+      if (AI.status.state === "ready") { aixRun(target, key, false); return; }
+      if (AI.status.state === "error") throw new Error(AI.status.error + (AI.status.hint ? ` ${AI.status.hint}` : ""));
+      st.step = AI.status.step || st.step;
+      aixPaint(key);
+      await new Promise(res => setTimeout(res, 500));
+    }
+    throw new Error("The AI took too long to start.");
+  } catch (e) {
+    st.state = "error"; st.note = { kind: "error", text: e.message }; st.step = "";
+    aixPaint(key);
+  }
 }
