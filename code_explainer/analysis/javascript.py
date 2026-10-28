@@ -45,6 +45,7 @@ def _doc_above(lines: list[str], idx: int) -> str:
 
 def analyze(info: FileInfo, source: str) -> None:
     info.analyzed = True
+    info.analyzer = "regex"
     lines = source.splitlines()
     info.complexity = len(_BRANCH.findall(source))
     for m in _IMPORT.finditer(source):
