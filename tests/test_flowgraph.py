@@ -152,6 +152,13 @@ def test_raise_ends_that_path_and_finally_is_shared():
     assert any(g["nodes"][e["from"]]["line"] in (10, 3, 7) for e in g["edges"] if e["to"] == fin["id"])
 
 
+def test_a_finally_block_is_still_drawn_when_every_other_path_leaves():
+    g = build("def f(p):\n    try:\n        return read(p)\n    except Exception:\n        raise\n    finally:\n        close()\n")
+    fin = next(n for n in g["nodes"] if n["line"] == 7)
+    assert fin["id"] in reachable(g) and out(g, fin) == []
+    assert ("always at the end", fin["id"]) in [(e["label"], e["to"]) for e in g["edges"] if e["from"] == one(g, "try")["id"]]
+
+
 def test_the_else_block_of_a_try_follows_the_good_path():
     g = build(TRY)
     ok = next(n for n in g["nodes"] if n["line"] == 10)

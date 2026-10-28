@@ -48,6 +48,13 @@ tools, calling is asking a helper for a favour.
 - **Treemap:** area is lines of code. Colour by language, complexity, churn, popularity,
   "possibly unused", what you understand, or what changed.
 - **Dependencies:** module graph where folders collapse and expand.
+- **Flowcharts:** every function that makes a choice has a "▦ Flowchart" button in the file panel (and on Flow
+  steps). It draws the function step by step: choices as diamonds, loops, `try`/`except` paths, early returns and
+  errors. The boxes are worded for the reading level you picked (the technical level shows the exact code) and
+  link to their lines. Click a box to read it, and click a call inside it to open that function's own flowchart
+  (a breadcrumb takes you back). Scroll to zoom, drag to move, **Fit** shows the whole chart, **Copy as Mermaid**
+  gives text you can paste into GitHub or a README, and **Download SVG** saves the picture. Python is fully
+  supported; JavaScript/TypeScript needs `[treesitter]`. The words come from fixed rules, not a model.
 - **Health** and **AI** are described below.
 - Search (`/`) covers files and symbols. Views are linkable through the URL.
 
@@ -166,6 +173,10 @@ Analysis is static. Dynamic imports, reflection and framework magic can make a u
 into code outside the repository produce no link. Copy-paste detection finds identical bodies, not
 renamed ones. Name-based explanations are conventions ("`get_x` gets x") and are labelled as guesses.
 
+Flowcharts show the shape of a function's code, not what it does at run time: a function over 80 boxes is cut off
+(and says so), a `switch` case that runs on into the next one is drawn as leaving the switch, and a `finally` block is
+drawn once, not on every path. The charts of the least complex functions are left out if a report would get very large.
+
 The Health tab is an estimate too: "no test seen" means no test was seen reaching a function through the call graph, not
 that coverage was measured, and a safety finding is a place to look, not proof of a bug.
 
@@ -181,10 +192,11 @@ playwright install chromium     # for the browser tests; or set CHROMIUM_PATH
 pytest
 ```
 
-Where things live: `code_explainer/analysis/` (per-language parsers), `calls.py` / `resolve.py` (call graph and
+Where things live: `code_explainer/analysis/` (per-language parsers), `flowgraph.py` / `flowgraph_js.py` /
+`flowlayout.py` (function flowcharts), `calls.py` / `resolve.py` (call graph and
 imports), `explain.py` (the plain-language layer), `diff.py` (change review), `testmap.py` and `hygiene*.py` (the
 Health tab), `server.py` (serve mode), `ai/` (providers, lifecycle, retrieval, explain tasks, batch), and `web/`
-(the single-file app: `app.js` with `ai.js` and `health.js` spliced in by `report.py`). The AI tests run against
+(the single-file app: `app.js` with `ai.js`, `health.js` and `chart.js` spliced in by `report.py`). The AI tests run against
 fake Ollama and LM Studio servers (`tests/ai_fakes.py`, `tests/fake_backends.py`), so they need no model.
 
 Work test-first: run the whole suite before you change anything (so you know the baseline is
