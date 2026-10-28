@@ -24,7 +24,18 @@ def test_report_renders_and_navigates(tmp_path):
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(out.as_uri())
+        page.wait_for_selector(".card.story")  # the tour is the landing page
+        assert page.locator("text=The big picture").count()
+        page.click("text=Next ▶")
+        assert page.locator("text=The floors of the house").count()
+        page.select_option("#level", "plain")
+        assert page.locator("text=Folder layout").count()
+        page.click("[data-tab=overview]")
         assert page.locator("text=Start here").count()
+        page.click("[data-tab=flow]")
+        page.wait_for_selector(".frow")
+        page.click("[data-tab=words]")
+        assert page.locator(".words .card").count() > 10
         page.click("[data-tab=treemap]")
         page.wait_for_selector("#tm .tile[data-path]")
         page.click("#tm .tile[data-path]")
