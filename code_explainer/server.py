@@ -17,16 +17,16 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .ai import discovery as ai_discovery
+from .ai import params as ai_params
+from .ai import settings as ai_settings
 from .core import analyze_repo
 from .ingest import IGNORED_DIRS
+from .paths import state_dir
 from .report import render_html
 
 MAX_BODY = 1_000_000
 POLL_SECONDS = 2.0
-
-
-def state_dir() -> Path:
-    return Path(os.environ.get("CODE_EXPLAINER_HOME") or Path.home() / ".code-explainer")
 
 
 def repo_id(root: Path) -> str:
@@ -159,29 +159,47 @@ def make_handler(session: Session, any_host: bool = False):
                     return self._json({"version": session.version, "data": session.data})
             if path == "/api/progress":
                 return self._json(session.load_progress())
+            if path == "/api/ai/settings":
+                return self._json({"settings": ai_settings.load(), "schema": ai_params.schema()})
+            if path == "/api/ai/providers":
+                st = ai_settings.load()
+                return self._json({"providers": ai_discovery.discover(st), "selected": st["selected"]})
             self._json({"error": "not found"}, 404)
 
-        def do_POST(self):
-            if not self._host_ok():
-                return self._json({"error": "bad host"}, 403)
-            if self.path.split("?", 1)[0] != "/api/progress":
-                return self._json({"error": "not found"}, 404)
+        def _read_json_post(self):
+            """Shared checks for every POST. Returns (ok, parsed); on failure the error is already sent."""
             origin = self.headers.get("Origin")
             if origin and not any_host and origin.split("://", 1)[-1] not in self._allowed():
-                return self._json({"error": "bad origin"}, 403)
+                self._json({"error": "bad origin"}, 403)
+                return False, None
             if not self.headers.get("Content-Type", "").startswith("application/json"):
-                return self._json({"error": "expected JSON"}, 415)
+                self._json({"error": "expected JSON"}, 415)
+                return False, None
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = -1
             if not 0 <= length <= MAX_BODY:
-                return self._json({"error": "bad length"}, 413)
+                self._json({"error": "bad length"}, 413)
+                return False, None
             try:
-                raw = json.loads(self.rfile.read(length) or b"null")
+                return True, json.loads(self.rfile.read(length) or b"null")
             except ValueError:
-                return self._json({"error": "bad json"}, 400)
-            self._json(session.save_progress(raw))
+                self._json({"error": "bad json"}, 400)
+                return False, None
+
+        def do_POST(self):
+            if not self._host_ok():
+                return self._json({"error": "bad host"}, 403)
+            path = self.path.split("?", 1)[0]
+            if path not in ("/api/progress", "/api/ai/settings"):
+                return self._json({"error": "not found"}, 404)
+            ok, raw = self._read_json_post()
+            if not ok:
+                return
+            if path == "/api/progress":
+                return self._json(session.save_progress(raw))
+            self._json({"settings": ai_settings.update(raw), "schema": ai_params.schema()})
 
     return Handler
 
