@@ -95,7 +95,7 @@ def test_an_explanation_follows_the_explain_level_and_each_level_is_saved_separa
     ready_ai(ai)
     goto_file(ai)
     explain_file(ai)
-    assert "8-year-old" in model_calls(ai)[-1]["messages"][0]["content"]
+    assert "complete beginner" in model_calls(ai)[-1]["messages"][0]["content"]
     ai.page.select_option("#level", "tech")
     ai.page.locator('.aix-btn[data-kind="file"]').click()
     ai.page.wait_for_selector(".aix-box .aix-stats")
