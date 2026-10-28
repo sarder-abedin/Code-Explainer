@@ -1,8 +1,7 @@
 (() => {
 "use strict";
-const D = JSON.parse(document.getElementById("data").textContent);
-const FILES = D.files;
-const BY = new Map(FILES.map(f => [f.path, f]));
+let D, FILES, BY, SYMS, EX, CH, langs, LANG_COLOR;
+const SERVE = JSON.parse(document.getElementById("serve").textContent); // null in a static export
 const SVGNS = "http://www.w3.org/2000/svg";
 
 // ---------- helpers ----------
@@ -13,7 +12,7 @@ function h(tag, attrs, ...kids) {
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (v !== false && v != null) el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid);
   return el;
 }
 function s(tag, attrs, ...kids) {
@@ -22,32 +21,55 @@ function s(tag, attrs, ...kids) {
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid);
   return el;
 }
 const fmt = n => n.toLocaleString();
 const base = p => p.slice(p.lastIndexOf("/") + 1);
 const dirOf = p => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#edc948", "#76b7b2", "#e15759", "#9c755f", "#af7aa1", "#86bcb6", "#bab0ac"];
-const langs = Object.entries(D.repo.languages).sort((a, b) => b[1].loc - a[1].loc);
-const LANG_COLOR = Object.fromEntries(langs.map(([n], i) => [n, PALETTE[i % PALETTE.length]]));
 const maxOf = k => Math.max(1, ...FILES.map(f => k(f)));
 
-const state = { tab: "overview", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set() };
+// Everything derived from the analysis lives here so serve mode can swap in fresh data.
+function setData(data) {
+  D = data; FILES = D.files;
+  BY = new Map(FILES.map(f => [f.path, f]));
+  SYMS = new Map();
+  for (const f of FILES) for (const sym of f.symbols) SYMS.set(`${f.path}::${sym.qual}`, { sym, file: f });
+  EX = D.explain || { folders: {}, story: [], glossary: [] };
+  CH = D.changes || null;
+  langs = Object.entries(D.repo.languages).sort((a, b) => b[1].loc - a[1].loc);
+  LANG_COLOR = Object.fromEntries(langs.map(([n], i) => [n, PALETTE[i % PALETTE.length]]));
+  if (CH) METRICS.changed = { label: "Changed in this review" }; else delete METRICS.changed;
+}
+let LEVEL = "kid";
+try { LEVEL = localStorage.getItem("ce.level") || "kid"; } catch (e) { /* storage may be blocked */ }
+if (!["kid", "plain", "tech"].includes(LEVEL)) LEVEL = "kid";
+// Text objects look like {kid, plain}; Technical level reads the plain variant where text is needed.
+const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
+const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
+// `code` spans in generated text become <code> elements.
+const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
+const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+  flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (p.get("tab")) state.tab = p.get("tab");
+  if (p.get("step")) state.storyStep = Math.max(0, +p.get("step") || 0);
   const f = p.get("f");
   state.selected = f && BY.has(f) ? f : null;
   if (p.get("line")) state.line = +p.get("line"); else state.line = 0;
+  if (p.get("root") && SYMS.has(p.get("root"))) state.flowRoot = p.get("root");
 }
 function writeHash() {
   const p = new URLSearchParams();
   p.set("tab", state.tab);
   if (state.selected) p.set("f", state.selected);
   if (state.line) p.set("line", state.line);
+  if (state.tab === "flow" && state.flowRoot) p.set("root", state.flowRoot);
+  if (state.tab === "story") p.set("step", state.storyStep);
   history.replaceState(null, "", "#" + p);
 }
 function openFile(path, line) {
@@ -62,16 +84,105 @@ function renderShell() {
   const brand = document.getElementById("brand");
   brand.replaceChildren(r.name, h("small", {}, `${fmt(r.files)} files · ${fmt(r.loc)} lines` + (r.git && r.git.head ? ` · ${r.git.head}` : "")));
   for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => setTab(b.dataset.tab);
+  document.querySelector('#tabs [data-tab="changes"]').hidden = !CH;
+  const sel = document.getElementById("level");
+  sel.value = LEVEL;
+  sel.onchange = () => { LEVEL = sel.value; try { localStorage.setItem("ce.level", LEVEL); } catch (e) { /* ignore */ } renderAll(); };
 }
 function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ overview: renderOverview, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ story: renderStory, changes: renderChanges, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
   for (const el of document.querySelectorAll("[data-path]")) el.classList.toggle("sel", el.dataset.path === state.selected);
+}
+
+// ---------- story (guided tour) ----------
+function renderStory(view) {
+  const steps = EX.story;
+  if (!steps.length) { view.append(h("div", { class: "empty" }, "Nothing to tell yet.")); return; }
+  state.storyStep = Math.max(0, Math.min(steps.length - 1, state.storyStep));
+  const st = steps[state.storyStep];
+  const go = i => { state.storyStep = i; writeHash(); renderAll(); if (steps[i].path) openFile(steps[i].path, steps[i].line); };
+  const dots = h("div", { class: "dots", role: "tablist", "aria-label": "Tour steps" }, steps.map((x, i) =>
+    h("button", { class: "dot2" + (i === state.storyStep ? " on" : i < state.storyStep ? " done" : ""), title: T(x.title), "aria-label": `Step ${i + 1}: ${T(x.title)}`, onclick: () => go(i) }, String(i + 1))));
+  const paras = T(st.text).split("\n").map(line => h("p", {}, rich(line)));
+  const hit = st.symbol && SYMS.get(st.symbol);
+  const src = hit && hit.file.source ? hit.file.source.split("\n").slice(hit.sym.line - 1, Math.min(hit.sym.end_line, hit.sym.line + 24)).join("\n") : "";
+  const card = h("article", { class: "card story" + (LEVEL === "kid" ? " kid" : "") },
+    h("div", { class: "kicker" }, `Step ${state.storyStep + 1} of ${steps.length}`),
+    h("h1", {}, T(st.title)), paras,
+    src ? h("pre", { class: "snip" }, src + (hit.sym.end_line - hit.sym.line >= 25 ? "\n…" : "")) : null,
+    h("div", { class: "nav2" },
+      h("button", { onclick: () => go(state.storyStep - 1), disabled: state.storyStep === 0 }, "◀ Back"),
+      st.path ? h("button", { onclick: () => openFile(st.path, st.line) }, "Show me the code") : null,
+      h("button", { class: "primary", onclick: () => go(state.storyStep + 1), disabled: state.storyStep === steps.length - 1 }, "Next ▶")));
+  view.append(dots, card, h("p", { class: "hint" },
+    "Everything here is worked out from the code itself: names, comments, who borrows from whom, who asks whom for help. "
+    + "When something is only a guess from a name, the text says so. Use the “Explain” menu at the top to change how it is told."));
+  markSelected();
+}
+
+// ---------- changes (review of a diff) ----------
+const STATUS = { A: ["new", "ok"], M: ["changed", ""], D: ["removed", "warn"], R: ["moved", ""] };
+function diffEl(patch) {
+  return h("pre", { class: "patch" }, patch.split("\n").map(line => h("span", { class: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "" }, line + "\n")));
+}
+function renderChanges(view) {
+  const s = CH.summary;
+  const card = (n, l) => h("div", { class: "card" }, h("div", { class: "n" }, String(n)), h("div", { class: "l" }, l));
+  view.append(
+    h("p", { class: "hint", style: "margin-top:0" }, `Comparing ${CH.base} → ${CH.head}`),
+    h("div", { class: "grid" },
+      card(s.files, `files touched (${s.added} new, ${s.modified} changed, ${s.deleted} removed)`),
+      card(`+${fmt(s.linesAdded)} / −${fmt(s.linesDeleted)}`, "lines"),
+      card(s.impactedFiles, "other files that depend on the change"),
+      card((s.complexityDelta > 0 ? "+" : "") + s.complexityDelta, "complexity change"),
+      card(s.newDead + s.risks + s.newDuplicates, "things to double-check")));
+  const flags = [];
+  for (const r of CH.risks) flags.push(h("li", { onclick: () => BY.has(r.what.split("::")[0]) ? openFile(r.what.split("::")[0]) : null },
+    h("span", { class: "badge warn" }, "removed but used"), h("span", {}, h("span", { class: "p" }, r.what), h("span", { class: "why" }, `${r.why}: ${r.users.join(", ")}`))));
+  for (const d of CH.newDead) flags.push(h("li", { onclick: () => BY.has(d.path) && openFile(d.path, d.line) },
+    h("span", { class: "badge warn" }, d.kind === "orphaned" ? "lost its caller" : d.kind === "unused-file" ? "unused file" : "unused"), h("span", {}, h("span", { class: "p" }, `${d.path}${d.qual ? " → " + d.qual : ""}`), h("span", { class: "why" }, d.why))));
+  for (const g of CH.newDuplicates) flags.push(h("li", { onclick: () => BY.has(g.members[0].path) && openFile(g.members[0].path, g.members[0].line) },
+    h("span", { class: "badge warn" }, "copy-paste"), h("span", {}, h("span", { class: "p" }, g.members.map(m => m.qual).join(" = ")), h("span", { class: "why" }, `${g.lines} identical lines in ${g.members.map(m => base(m.path)).join(", ")}`))));
+  if (flags.length) view.append(h("h2", {}, "Double-check these", h("small", {}, "possible leftovers and risks")), h("ul", { class: "list" }, flags));
+  if (CH.reach.length) view.append(h("h2", {}, "Runs from", h("small", {}, "starting points that can reach the changed code")),
+    h("ul", { class: "list" }, CH.reach.map(r => h("li", { onclick: () => { state.flowRoot = r.root; state.flowOpen.clear(); setTab("flow"); } },
+      h("span", {}, h("span", { class: "p" }, r.name), h("span", { class: "why" }, `${r.why.replace(/`/g, "")} · reaches ${r.count} changed ${r.count === 1 ? "function" : "functions"}`))))));
+  view.append(h("h2", {}, "Read in this order", h("small", {}, "the riskiest and most connected first, tests last")));
+  CH.reviewOrder.forEach((path, i) => {
+    const e = CH.files[path], st = STATUS[e.status] || ["changed", ""];
+    const open = state.patchOpen && state.patchOpen.has(path);
+    const sy = e.symbols;
+    view.append(h("div", { class: "card chg" },
+      h("div", { class: "chead" }, h("span", { class: "num" }, String(i + 1)), h("span", { class: "badge " + st[1] }, st[0]),
+        h("a", { class: "link", style: "display:inline", onclick: () => BY.has(path) && openFile(path) }, e.oldPath ? `${e.oldPath} → ${path}` : path),
+        h("span", { class: "loc" }, `+${e.added} / −${e.deleted}`)),
+      h("div", { class: "chips" }, e.why.map(w => h("span", { class: "badge" }, w))),
+      LEVEL !== "tech" ? h("div", { class: "simple" }, rich(T(e.explain))) : h("div", { class: "hint" },
+        ["added", "modified", "removed"].filter(k => sy[k].length).map(k => `${k}: ${sy[k].join(", ")}`).join(" · ")),
+      e.blast.length ? h("div", { class: "hint" }, "Affects: ", e.blast.slice(0, 8).map((b, j) => [j ? ", " : "", h("a", { class: "link", style: "display:inline", onclick: () => BY.has(b.path) && openFile(b.path) }, base(b.path) + (b.distance > 1 ? ` (${b.distance} steps away)` : ""))]), e.blast.length > 8 ? ` and ${e.blast.length - 8} more` : "") : null,
+      h("button", { onclick: () => { state.patchOpen = state.patchOpen || new Set(); open ? state.patchOpen.delete(path) : state.patchOpen.add(path); renderAll(); } }, open ? "Hide the changes" : "Show the changes"),
+      open ? (e.binary ? h("div", { class: "hint" }, "Binary file.") : diffEl(e.patch)) : null));
+  });
+  markSelected();
+}
+
+// ---------- words (glossary) ----------
+function renderWords(view) {
+  const q = h("input", { type: "search", placeholder: "Find a word…", "aria-label": "Filter words", oninput: () => draw() });
+  const box = h("div", { class: "words" });
+  function draw() {
+    const f = q.value.trim().toLowerCase();
+    box.replaceChildren(...EX.glossary.filter(g => !f || g.term.toLowerCase().includes(f) || g.kid.toLowerCase().includes(f) || g.plain.toLowerCase().includes(f))
+      .map(g => h("div", { class: "card" }, h("h3", { style: "margin:0 0 4px;font-size:15px" }, g.term), h("div", {}, LEVEL === "kid" ? g.kid : g.plain),
+        LEVEL === "kid" ? h("div", { class: "hint" }, "Grown-up version: " + g.plain) : null)));
+  }
+  view.append(h("div", { class: "toolbar" }, q), box); draw();
 }
 
 // ---------- overview ----------
@@ -99,7 +210,16 @@ function renderOverview(view) {
        [r.git && r.git.commits != null ? fmt(r.git.commits) : "n/a", "commits"]].map(([n, l]) =>
         h("div", { class: "card" }, h("div", { class: "n" }, n), h("div", { class: "l" }, l)))),
     bar, legend,
+    (() => {
+      const ps = progressStats();
+      return h("div", { class: "card prog-card" }, h("div", {}, h("b", {}, "Your progress "), `${ps.done} of ${ps.n} files understood (${ps.pct}% of the code by size)`),
+        h("div", { class: "pbar", role: "progressbar", "aria-valuenow": String(ps.pct), "aria-valuemin": "0", "aria-valuemax": "100" }, h("span", { style: `width:${ps.pct}%` })),
+        h("div", { class: "hint" }, "Tick “I understand this file” in the file panel as you go. " + (SERVE ? "Saved on this computer." : "Saved in this browser.")));
+    })(),
     h("div", { class: "cols" },
+      listOf("Next to learn", "from the reading order, skipping what you know",
+        D.readingOrder.filter(o => !isUnderstood(o.path)).slice(0, 6).map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
+      PROG.bookmarks.filter(p => BY.has(p)).length ? listOf("Bookmarks", "", PROG.bookmarks.filter(p => BY.has(p)).map(p => fileRow(BY.get(p), null, PROG.notes[p] ? PROG.notes[p].slice(0, 80) : ""))) : null,
       listOf("Start here", "read in this order",
         D.readingOrder.map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
       listOf("Hotspots", "most complex files",
@@ -108,6 +228,10 @@ function renderOverview(view) {
       listOf("Possibly unused", "no file imports these and they are not entry points",
         FILES.filter(f => f.unused).sort((a, b) => b.loc - a.loc).slice(0, 10)
           .map(f => fileRow(f, null, `${fmt(f.loc)} lines`))),
+      D.duplicates && D.duplicates.length ? listOf("Copy-pasted code", "identical function bodies in several places",
+        D.duplicates.slice(0, 8).map(g => h("li", { tabindex: 0, onclick: () => openFile(g.members[0].path, g.members[0].line) },
+          h("span", {}, h("span", { class: "p" }, g.members.map(m => m.qual).join(" = ")),
+            h("span", { class: "why" }, `${g.lines} lines × ${g.members.length} copies · ${g.members.map(m => base(m.path)).join(", ")}`))))) : null,
       r.hasHistory ? listOf("Most changed", "commits touching the file",
         FILES.filter(f => f.churn).sort((a, b) => b.churn - a.churn).slice(0, 10)
           .map(f => fileRow(f, null, `${f.churn} commits`))) : null),
@@ -123,6 +247,7 @@ const METRICS = {
   churn: { label: "Churn (commits)", val: f => f.churn },
   fanin: { label: "Imported by", val: f => f.importedBy.length },
   unused: { label: "Possibly unused" },
+  understood: { label: "What I understand" },
 };
 function buildTree(prefix) {
   const root = { name: prefix || D.repo.name, path: prefix, children: new Map(), dir: true };
@@ -174,6 +299,11 @@ function squarify(items, x, y, w, hgt) {
 function tileColor(f) {
   const m = state.colorBy;
   if (m === "lang") return { fill: LANG_COLOR[f.lang] || "#999", op: 0.85 };
+  if (m === "changed") {
+    const c = CH.files[f.path];
+    return c ? { fill: c.status === "A" ? "#2e9e5b" : "#e0a030", op: 0.95 } : { fill: "#888", op: 0.12 };
+  }
+  if (m === "understood") return isUnderstood(f.path) ? { fill: "#2e9e5b", op: 0.95 } : { fill: "#888", op: 0.15 };
   if (m === "unused") return f.unused ? { fill: "#e15759", op: 0.9 } : { fill: "#888", op: 0.15 };
   const mx = METRICS[m].max;
   const t = Math.sqrt(Math.min(1, METRICS[m].val(f) / mx));
@@ -191,6 +321,8 @@ function renderTreemap(view) {
   });
   view.append(h("div", { class: "toolbar" }, h("label", {}, "Colour by ", sel), crumbs,
     h("span", {}, "Box area = lines of code. Click a folder to zoom in, a file to inspect it.")));
+  const fx = state.tmRoot && EX.folders[state.tmRoot];
+  if (fx && LEVEL !== "tech") view.append(h("div", { class: "simple box" }, (LEVEL === "kid" ? fx.emoji + " " : ""), rich(T(fx))));
   const W = Math.max(480, view.clientWidth - 34), H = Math.max(360, Math.min(window.innerHeight - 170, W * 0.62));
   const svg = s("svg", { id: "tm", viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Treemap of the repository" });
   const root = buildTree(state.tmRoot);
@@ -206,13 +338,13 @@ function renderTreemap(view) {
         const col = tileColor(c.file);
         const g = s("g", { class: "tile", "data-path": c.file.path, onclick: () => openFile(c.file.path) },
           s("rect", { x: r.x, y: r.y, width: r.w, height: r.h, fill: col.fill, "fill-opacity": col.op }));
-        tip(g, `${c.file.path}\n${fmt(c.file.loc)} lines · complexity ${c.file.complexity}` + (c.file.churn ? ` · ${c.file.churn} commits` : "") + (c.file.unused ? "\npossibly unused" : ""));
+        tip(g, `${c.file.path}\n${LEVEL !== "tech" && c.file.explain ? firstSentence(T(c.file.explain), 160) + "\n" : ""}${fmt(c.file.loc)} lines · complexity ${c.file.complexity}` + (c.file.churn ? ` · ${c.file.churn} commits` : "") + (c.file.unused ? "\npossibly unused" : ""));
         if (r.w > 46 && r.h > 14) g.append(s("text", { x: r.x + 4, y: r.y + 12, "font-size": 11, "clip-path": "none" }, clip(c.name, r.w)));
         svg.append(g);
       } else {
         const g = s("g", { class: "tile" , onclick: () => { state.tmRoot = c.path; renderAll(); } },
           s("rect", { x: r.x, y: r.y, width: r.w, height: r.h, fill: "var(--hover)", "fill-opacity": 0.6 }));
-        tip(g, `${c.path}/\n${fmt(c.value)} lines`);
+        tip(g, `${c.path}/\n${fmt(c.value)} lines` + (EX.folders[c.path] && LEVEL !== "tech" ? "\n" + T(EX.folders[c.path]) : ""));
         svg.append(g);
         const showHead = r.w > 40 && r.h > HEAD + 8;
         if (showHead) {
@@ -229,6 +361,8 @@ function renderTreemap(view) {
 function clip(text, w) { const n = Math.max(1, Math.floor((w - 8) / 6.2)); return text.length > n ? text.slice(0, Math.max(1, n - 1)) + "…" : text; }
 function legendFor() {
   if (state.colorBy === "lang") return h("div", { class: "legend hint" }, langs.slice(0, 10).map(([n]) => h("span", {}, h("i", { class: "dot", style: `background:${LANG_COLOR[n]}` }), n)));
+  if (state.colorBy === "changed") return h("div", { class: "hint legend" }, h("span", {}, h("i", { class: "dot", style: "background:#2e9e5b" }), "new file"), h("span", {}, h("i", { class: "dot", style: "background:#e0a030" }), "changed or moved"), h("span", {}, "grey = untouched"));
+  if (state.colorBy === "understood") { const ps = progressStats(); return h("div", { class: "hint" }, `Green = you marked it understood (${ps.pct}% of the code so far). Grey = still to explore.`); }
   if (state.colorBy === "unused") return h("div", { class: "hint" }, "Red = no other file imports it and it is not an entry point.");
   return h("div", { class: "hint" }, `Darker = higher ${METRICS[state.colorBy].label.toLowerCase()} (max ${fmt(METRICS[state.colorBy].max)}).` +
     (state.colorBy === "churn" && !D.repo.hasHistory ? " No git history was available." : ""));
@@ -331,7 +465,7 @@ function renderGraph(view) {
                         : s("circle", { r, fill: LANG_COLOR[n.lang] || "#999" });
     const label = n.dir ? `${base(n.id)}/ (${n.files})` : base(n.id);
     const el = s("g", { class: "node", "data-path": n.dir ? "" : n.id, tabindex: 0 }, shape,
-      s("text", { x: r + 3, y: 4 }, label), s("title", {}, n.dir ? `${n.id}/ · ${n.files} files · ${fmt(n.loc)} lines (click to expand)` : n.id));
+      s("text", { x: r + 3, y: 4 }, label), s("title", {}, n.dir ? `${n.id}/ · ${n.files} files · ${fmt(n.loc)} lines (click to expand)` + (EX.folders[n.id] && LEVEL !== "tech" ? "\n" + T(EX.folders[n.id]) : "") : n.id));
     n.el = el; g.append(el);
     let moved = false;
     el.addEventListener("pointerdown", ev => {
@@ -381,22 +515,111 @@ function renderGraph(view) {
   markSelected();
 }
 
+// ---------- flow explorer ----------
+function symLabel(sym) { return sym.kind === "module" ? "(file's own top-level code)" : sym.qual + (sym.kind === "class" ? "" : "()"); }
+function buildFlow(rootId) {
+  const rows = [], seen = new Set();
+  (function walk(id, depth, via, conf, parentKey, stack) {
+    const hit = SYMS.get(id); if (!hit) return;
+    const key = parentKey + ">" + id;
+    const repeat = seen.has(id), cyc = stack.includes(id);
+    const kids = (hit.sym.callees || []).filter(c => SYMS.has(c.id) && (state.flowGuess || c.conf === "certain"));
+    const row = { key, id, depth, sym: hit.sym, file: hit.file, via, conf, repeat, cyc, nKids: kids.length, cut: false };
+    rows.push(row); seen.add(id);
+    if (repeat || cyc) return;
+    if (depth >= state.flowDepth) { row.cut = kids.length > 0; return; }
+    for (const c of kids) walk(c.id, depth + 1, c.line, c.conf, key, stack.concat(id));
+  })(rootId, 0, 0, "certain", "", []);
+  return rows;
+}
+function visibleFlow(rows) {
+  const out = []; let hideBelow = Infinity;
+  for (const r of rows) {
+    if (r.depth > hideBelow) continue;
+    hideBelow = Infinity; out.push(r);
+    if (state.flowOpen.has("c:" + r.key)) hideBelow = r.depth;
+  }
+  return out;
+}
+function renderFlow(view) {
+  const roots = D.flowRoots;
+  if (!roots.length) {
+    view.append(h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "No starting points found"),
+      h("p", {}, "This tab follows what runs, step by step, from a starting point such as a command, a web route, or a script's `main()`. None were found with call information."),
+      FILES.some(f => (f.lang === "JavaScript" || f.lang === "TypeScript") && !f.hasCalls)
+        ? h("p", {}, "JavaScript/TypeScript call tracing needs tree-sitter: ", h("code", {}, "pip install 'code-explainer[treesitter]'"), ".") : null));
+    return;
+  }
+  if (!SYMS.has(state.flowRoot)) state.flowRoot = roots[0].id;
+  const rows = buildFlow(state.flowRoot), vis = visibleFlow(rows);
+  if (state.flowStep >= vis.length) state.flowStep = vis.length - 1;
+  const sel = h("select", { "aria-label": "Starting point", onchange: e => { state.flowRoot = e.target.value; state.flowOpen.clear(); state.flowStep = -1; writeHash(); renderAll(); } },
+    roots.map(r => h("option", { value: r.id, selected: r.id === state.flowRoot }, `${r.name}  —  ${r.why}`)));
+  const depth = h("select", { "aria-label": "Depth", onchange: e => { state.flowDepth = +e.target.value; state.flowStep = -1; renderAll(); } },
+    [2, 3, 4, 5, 6, 8].map(n => h("option", { value: n, selected: n === state.flowDepth }, `${n} levels`)));
+  const guess = h("label", {}, h("input", { type: "checkbox", checked: state.flowGuess, onchange: e => { state.flowGuess = e.target.checked; state.flowStep = -1; renderAll(); } }), " show guesses");
+  const go = d => { state.flowStep = Math.max(0, Math.min(vis.length - 1, (state.flowStep < 0 ? (d > 0 ? 0 : 0) : state.flowStep + d))); renderAll(); };
+  const nav = h("span", { class: "nav" },
+    h("button", { onclick: () => go(-1), disabled: state.flowStep <= 0 }, "◀ Back"),
+    h("button", { onclick: () => go(1), disabled: state.flowStep >= vis.length - 1 }, state.flowStep < 0 ? "▶ Step through" : "Next ▶"),
+    state.flowStep >= 0 ? h("span", {}, ` step ${state.flowStep + 1} of ${vis.length}`) : null);
+  view.append(h("div", { class: "toolbar" }, h("label", {}, "Start from ", sel), depth, guess, nav));
+  view.append(h("p", { class: "hint", style: "margin-top:0" },
+    "Read top to bottom: each line is a function that the line above calls, in the order the calls appear in the code. Indented lines run inside their parent. ",
+    h("span", { class: "badge warn" }, "guess"), " means the link is inferred from the name only."));
+  if (state.flowStep >= 0) view.append(stepCard(vis[state.flowStep], vis));
+  const list = h("div", { class: "flow", role: "tree" });
+  vis.forEach((r, i) => {
+    const open = !state.flowOpen.has("c:" + r.key);
+    const toggle = r.nKids && !r.repeat && !r.cyc && !r.cut
+      ? h("button", { class: "tg", "aria-label": open ? "Collapse" : "Expand", onclick: e => { e.stopPropagation(); const k = "c:" + r.key; state.flowOpen.has(k) ? state.flowOpen.delete(k) : state.flowOpen.add(k); renderAll(); } }, open ? "▾" : "▸")
+      : h("span", { class: "tg" }, "");
+    list.append(h("div", { class: "frow" + (i === state.flowStep ? " cur" : ""), role: "treeitem", style: `padding-left:${8 + r.depth * 22}px`, tabindex: 0,
+      onclick: () => { state.flowStep = i; openFile(r.file.path, r.sym.line); renderAll(); } },
+      toggle, h("span", { class: "n" }, String(i + 1)),
+      h("span", { class: "nm" }, symLabel(r.sym)),
+      r.conf === "inferred" ? h("span", { class: "badge warn", title: "Linked by name only; may be wrong" }, "guess") : null,
+      r.repeat ? h("span", { class: "badge" }, "↻ shown above") : null,
+      r.cyc ? h("span", { class: "badge" }, "↺ calls itself") : null,
+      r.cut ? h("span", { class: "badge" }, `+${r.nKids} deeper`) : null,
+      (LEVEL !== "tech" && r.sym.explain ? firstSentence(T(r.sym.explain), 110) : r.sym.doc) ? h("span", { class: "d" }, (LEVEL !== "tech" && r.sym.explain ? firstSentence(T(r.sym.explain), 110) : r.sym.doc).replace(/`/g, "")) : null,
+      h("span", { class: "loc" }, `${base(r.file.path)}:${r.sym.line}`)));
+  });
+  view.append(list);
+  const roots0 = SYMS.get(state.flowRoot);
+  if (roots0 && !rows[0].nKids) view.append(h("p", { class: "hint" }, "This starting point doesn't call anything else inside the repository."));
+}
+function stepCard(r, vis) {
+  const src = r.file.source ? r.file.source.split("\n").slice(r.sym.line - 1, Math.min(r.sym.end_line, r.sym.line + 29)) : [];
+  const parent = vis.slice(0, vis.indexOf(r)).reverse().find(x => x.depth === r.depth - 1);
+  return h("div", { class: "card step" },
+    h("div", { class: "t" }, "Now running: ", h("b", {}, symLabel(r.sym)), h("span", { class: "loc" }, ` ${r.file.path}:${r.sym.line}`)),
+    parent ? h("div", { class: "hint" }, `Called by ${symLabel(parent.sym)} at line ${r.via}.`) : h("div", { class: "hint" }, "This is where it starts."),
+    LEVEL !== "tech" && r.sym.explain ? h("div", { class: "simple" }, rich(T(r.sym.explain))) : (r.sym.doc ? h("div", {}, r.sym.doc) : null),
+    src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null);
+}
+
 // ---------- detail panel ----------
 function renderDetail() {
   const el = document.getElementById("detail");
   const f = state.selected && BY.get(state.selected);
   if (!f) { el.hidden = true; return; }
   el.hidden = false;
+  const keep = el.dataset.path === f.path ? ((el.querySelector(".dbody") || {}).scrollTop || 0) : 0;
   const badges = [h("span", { class: "badge" }, f.lang)];
   if (f.entry.length) badges.push(h("span", { class: "badge ok", title: f.entry.join("; ") }, "entry point"));
   if (f.isTest) badges.push(h("span", { class: "badge" }, "test"));
   if (f.unused) badges.push(h("span", { class: "badge warn", title: "No file imports this and it is not an entry point" }, "possibly unused"));
+  const chg = CH && CH.files[f.path];
+  if (chg) badges.push(h("span", { class: "badge ok", title: chg.why.join("; ") }, "changed in this review"));
   if (f.parseError) badges.push(h("span", { class: "badge warn", title: f.parseError }, "parse error"));
   const m = (n, l) => h("div", {}, h("b", {}, String(n)), h("span", {}, l));
   const links = (arr, empty) => arr.length ? arr.map(p => h("a", { class: "link", tabindex: 0, onclick: () => openFile(p), onkeydown: e => { if (e.key === "Enter") openFile(p); } }, p)) : h("span", { class: "empty", style: "padding:0" }, empty);
-  const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "sym", title: sym.doc, onclick: () => openFile(f.path, sym.line) },
-    h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, (sym.parent ? sym.parent + "." : "") + sym.name), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
-    h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : "")))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
+  const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "symwrap" },
+    h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = state.symOpen === f.path + "::" + sym.qual ? "" : f.path + "::" + sym.qual; openFile(f.path, sym.line); } },
+      h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
+      h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
+    LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null)) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
   const code = h("div", { class: "code", id: "code" });
   const lines = f.source ? f.source.split("\n") : [];
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
@@ -408,8 +631,11 @@ function renderDetail() {
     h("div", { class: "dhead" }, h("button", { class: "x", "aria-label": "Close", onclick: () => { state.selected = null; writeHash(); renderDetail(); markSelected(); } }, "✕"),
       h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null),
     h("div", { class: "dbody" },
+      progressControls(f),
+      LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
+      chg ? h("div", { class: "dsec" }, h("h3", {}, `What changed (+${chg.added} / −${chg.deleted})`), diffEl(chg.patch)) : null,
       h("div", { class: "dsec" }, h("h3", {}, `Symbols (${f.symbols.length})`), syms),
       h("div", { class: "dsec" }, h("h3", {}, `Imports (${f.imports.length})`), links(f.imports, "Imports nothing from this repo.")),
       h("div", { class: "dsec" }, h("h3", {}, `Imported by (${f.importedBy.length})`), links(f.importedBy, "Nothing imports this file.")),
@@ -419,17 +645,23 @@ function renderDetail() {
     c.scrollTop = Math.max(0, (state.line - 6) * 18);
     c.scrollIntoView({ block: "nearest" });
   }
-  document.querySelector(".dbody").scrollTop = state.line ? document.querySelector(".dbody").scrollTop : 0;
+  const body = el.querySelector(".dbody");
+  body.scrollTop = state.line ? body.scrollTop : keep;
+  el.dataset.path = f.path;
 }
 
 // ---------- search ----------
 function initSearch() {
   const input = document.getElementById("search"), box = document.getElementById("results");
-  const index = [];
-  for (const f of FILES) {
-    index.push({ label: base(f.path), path: f.path, kind: "file", f });
-    for (const sym of f.symbols) index.push({ label: sym.name, path: f.path, kind: sym.kind, line: sym.line, f });
-  }
+  let index = [], indexFor = null;
+  const ensureIndex = () => {
+    if (indexFor === D) return;
+    indexFor = D; index = [];
+    for (const f of FILES) {
+      index.push({ label: base(f.path), path: f.path, kind: "file", f });
+      for (const sym of f.symbols) index.push({ label: sym.name, path: f.path, kind: sym.kind, line: sym.line, f });
+    }
+  };
   let hits = [], cur = 0;
   const close = () => { box.hidden = true; hits = []; };
   const choose = i => { const x = hits[i]; if (!x) return; close(); input.blur(); openFile(x.path, x.line); };
@@ -441,6 +673,7 @@ function initSearch() {
   input.addEventListener("input", () => {
     const q = input.value.trim().toLowerCase();
     if (!q) return close();
+    ensureIndex();
     const scored = [];
     for (const x of index) {
       const l = x.label.toLowerCase(), p = x.path.toLowerCase();
@@ -462,11 +695,105 @@ function initSearch() {
   });
 }
 
+// ---------- progress, notes and bookmarks ----------
+const PROG = { understood: {}, notes: {}, bookmarks: [] };
+const progKey = () => "ce.progress." + (SERVE ? SERVE.id : D.repo.name);
+let toastTimer;
+function toast(msg, ms = 4000) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.hidden = !msg;
+  clearTimeout(toastTimer);
+  if (msg && ms) toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+async function loadProgress() {
+  let got = {};
+  try {
+    if (SERVE) got = await (await fetch("/api/progress")).json();
+    else got = JSON.parse(localStorage.getItem(progKey()) || "{}");
+  } catch (e) { /* no saved progress, or storage blocked */ }
+  PROG.understood = got.understood || {}; PROG.notes = got.notes || {}; PROG.bookmarks = got.bookmarks || [];
+}
+let saveTimer;
+function saveProgress() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      if (SERVE) {
+        const r = await fetch("/api/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(PROG) });
+        if (!r.ok) throw new Error(r.status);
+      } else localStorage.setItem(progKey(), JSON.stringify(PROG));
+    } catch (e) { toast("Could not save your progress here" + (SERVE ? "" : " (browser storage is blocked)"), 6000); }
+  }, 400);
+}
+const isUnderstood = p => !!PROG.understood[p];
+function progressStats() {
+  const files = FILES.filter(f => f.loc > 0);
+  const done = files.filter(f => isUnderstood(f.path));
+  const loc = files.reduce((a, f) => a + f.loc, 0), locDone = done.reduce((a, f) => a + f.loc, 0);
+  return { n: files.length, done: done.length, loc, locDone, pct: loc ? Math.round(100 * locDone / loc) : 0 };
+}
+function progressControls(f) {
+  const bm = PROG.bookmarks.includes(f.path);
+  const note = h("textarea", { class: "note", rows: 3, placeholder: "Your notes about this file (saved for you only)…", "aria-label": "Notes",
+    oninput: e => { const v = e.target.value; if (v.trim()) PROG.notes[f.path] = v; else delete PROG.notes[f.path]; saveProgress(); } });
+  note.value = PROG.notes[f.path] || "";
+  return h("div", { class: "dsec prog" },
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: isUnderstood(f.path),
+      onchange: e => { if (e.target.checked) PROG.understood[f.path] = true; else delete PROG.understood[f.path]; saveProgress(); refreshAfterProgress(); } }),
+      " I understand this file"),
+    h("button", { class: "star", "aria-pressed": String(bm), title: bm ? "Remove bookmark" : "Bookmark this file",
+      onclick: () => { PROG.bookmarks = bm ? PROG.bookmarks.filter(x => x !== f.path) : [...PROG.bookmarks, f.path]; saveProgress(); refreshAfterProgress(); } }, bm ? "★ Bookmarked" : "☆ Bookmark"),
+    note);
+}
+function refreshAfterProgress() {
+  // Re-render the main view (progress bar, colours) and the panel, without losing the notes box focus elsewhere.
+  const view = document.getElementById("view"), top = view.scrollTop;
+  renderAll(); view.scrollTop = top;
+}
+
+// ---------- live updates (serve mode) ----------
+function applyNewData(data, version) {
+  const prevTab = state.tab;
+  setData(data); SERVE.version = version;
+  if (state.selected && !BY.has(state.selected)) { state.selected = null; state.line = 0; }
+  if (state.flowRoot && !SYMS.has(state.flowRoot)) state.flowRoot = "";
+  if (state.tmRoot && !FILES.some(f => f.path.startsWith(state.tmRoot + "/"))) state.tmRoot = "";
+  if (state.colorBy === "changed" && !CH) state.colorBy = "lang";
+  state.storyStep = Math.min(state.storyStep, Math.max(0, EX.story.length - 1));
+  document.querySelector('#tabs [data-tab="changes"]').hidden = !CH;
+  if (prevTab === "changes" && !CH) state.tab = "overview";
+  renderShell(); renderAll();
+}
+function startLive() {
+  if (!SERVE) return;
+  const live = document.getElementById("live");
+  live.hidden = false;
+  let down = false;
+  setInterval(async () => {
+    try {
+      const v = await (await fetch("/api/version")).json();
+      if (down) { down = false; live.textContent = "● live"; live.className = "live"; }
+      if (v.error) { live.textContent = "● last update failed"; live.title = v.error; live.className = "live warn"; }
+      else { live.textContent = "● live"; live.title = ""; live.className = "live"; }
+      if (v.version !== SERVE.version) {
+        const r = await (await fetch("/api/data")).json();
+        applyNewData(r.data, r.version);
+        toast("The code changed: the map was refreshed.");
+      }
+    } catch (e) {
+      if (!down) { down = true; live.textContent = "● disconnected"; live.className = "live warn"; }
+    }
+  }, 2000);
+}
+
 // ---------- boot ----------
+setData(JSON.parse(document.getElementById("data").textContent));
+if (CH) state.colorBy = "changed";
 readHash();
 renderShell();
 initSearch();
 renderAll();
+loadProgress().then(() => { renderAll(); startLive(); });
 window.addEventListener("hashchange", () => { readHash(); renderAll(); });
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (state.tab !== "overview") renderAll(); }, 200); });
 })();
