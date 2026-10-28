@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 
 from ..model import FileInfo
-from . import generic, javascript, python_ast
+from . import generic, javascript, javascript_ts, python_ast
 
 LANGUAGES = {
     ".py": "Python", ".pyi": "Python",
@@ -31,7 +31,8 @@ def analyze_file(path: str, lang: str, source: str) -> FileInfo:
     if lang == "Python":
         python_ast.analyze(info, source)
     elif lang in ("JavaScript", "TypeScript"):
-        javascript.analyze(info, source)
+        if not javascript_ts.analyze(info, source):
+            javascript.analyze(info, source)
     else:
         generic.analyze(info, source)
     return info

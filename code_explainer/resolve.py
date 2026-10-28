@@ -9,7 +9,7 @@ from .model import FileInfo
 _JS_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json")
 
 
-def _py_index(paths: set[str]) -> dict[str, str]:
+def py_index(paths: set[str]) -> dict[str, str]:
     mods = []
     for p in paths:
         if not p.endswith(".py"):
@@ -69,30 +69,45 @@ def _resolve_python(info: FileInfo, paths: set[str], index: dict[str, str]) -> s
     return out
 
 
+def js_target(from_path: str, spec: str, paths: set[str]) -> str | None:
+    """File a relative JS/TS import specifier points at, or None."""
+    if not spec.startswith("."):
+        return None
+    target = posixpath.normpath(posixpath.join(posixpath.dirname(from_path), spec))
+    candidates = [target]
+    candidates += [target + ext for ext in _JS_EXTS]
+    candidates += [f"{target}/index{ext}" for ext in _JS_EXTS]
+    # TS projects import "./x.js" for "./x.ts".
+    stem, ext = posixpath.splitext(target)
+    if ext in (".js", ".jsx", ".mjs"):
+        candidates += [stem + e for e in (".ts", ".tsx", ".mts")]
+    for c in candidates:
+        if c in paths and c != from_path:
+            return c
+    return None
+
+
+def py_module_target(path: str, paths: set[str], index: dict[str, str], level: int, module: str) -> str | None:
+    """File for `from <level dots><module> import ...` seen in `path`."""
+    if level:
+        base = posixpath.dirname(path)
+        for _ in range(level - 1):
+            base = posixpath.dirname(base)
+        if not module:
+            init = posixpath.join(base, "__init__.py")
+            return init if init in paths else None
+        return _py_module_file(paths, base, module)
+    return index.get(module)
+
+
 def _resolve_js(info: FileInfo, paths: set[str]) -> set[str]:
-    out: set[str] = set()
-    here = posixpath.dirname(info.path)
-    for spec in info.raw_imports:
-        if not spec.startswith("."):
-            continue
-        target = posixpath.normpath(posixpath.join(here, spec))
-        candidates = [target]
-        candidates += [target + ext for ext in _JS_EXTS]
-        candidates += [f"{target}/index{ext}" for ext in _JS_EXTS]
-        # TS projects import "./x.js" for "./x.ts".
-        stem, ext = posixpath.splitext(target)
-        if ext in (".js", ".jsx", ".mjs"):
-            candidates += [stem + e for e in (".ts", ".tsx", ".mts")]
-        for c in candidates:
-            if c in paths and c != info.path:
-                out.add(c)
-                break
-    return out
+    hits = (js_target(info.path, spec, paths) for spec in info.raw_imports)
+    return {h for h in hits if h}
 
 
 def resolve_imports(files: dict[str, FileInfo]) -> None:
     paths = set(files)
-    index = _py_index(paths)
+    index = py_index(paths)
     for info in files.values():
         if info.lang == "Python":
             targets = _resolve_python(info, paths, index)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import posixpath
 import re
@@ -12,7 +13,11 @@ from . import __version__
 from .analysis import CODE_LANGS, analyze_file, detect_language
 from .ingest import git_churn, git_summary, list_files
 from .model import FileInfo
-from .resolve import resolve_imports
+from .explain import explain_repo
+from .calls import resolve_calls, sym_id
+from .diff import compare, resolve_ref, snapshot, story_steps
+from .duplicates import find_duplicates
+from .resolve import py_index, resolve_imports
 
 try:
     import tomllib
@@ -53,6 +58,10 @@ def _declared_entry_points(root: Path, files: dict[str, FileInfo]) -> None:
                     break
             if hit:
                 files[hit].entry_reasons.append(f"console script `{cmd}` (pyproject.toml)")
+                attr = str(target).split(":")[1].strip() if ":" in str(target) else ""
+                for sym in files[hit].symbols:
+                    if attr and sym.qual == attr and not sym.entry:
+                        sym.entry = f"console script `{cmd}`"
     pkg = root / "package.json"
     if pkg.is_file():
         try:
@@ -125,7 +134,39 @@ def _reading_order(files: dict[str, FileInfo], limit: int = 25) -> list[dict]:
     return order
 
 
-def analyze_repo(root: Path, name: str | None = None) -> dict:
+_ROOT_FUNCS = {"main", "run", "cli", "handler", "start", "serve"}
+
+
+def _flow_roots(files: dict[str, FileInfo]) -> list[dict]:
+    """Places where execution can start: commands, routes, scripts, main()."""
+    roots: dict[str, dict] = {}
+    rank = {"console": 0, "route": 1, "handler": 2, "script": 3, "main": 4}
+
+    def add(path: str, sym, why: str, kind: str) -> None:
+        sid = sym_id(path, sym)
+        if sid not in roots or rank[kind] < rank[roots[sid]["kind"]]:
+            roots[sid] = {"id": sid, "path": path, "name": sym.qual if sym.qual != "<module>" else base_name(path),
+                          "why": why, "kind": kind}
+
+    def base_name(p: str) -> str:
+        return posixpath.basename(p)
+
+    for path, info in files.items():
+        if info.is_test or not info.has_calls:
+            continue
+        for sym in info.symbols:
+            if sym.entry:
+                kind = "console" if sym.entry.startswith("console") else "route" if "route" in sym.entry else "handler"
+                add(path, sym, sym.entry, kind)
+            elif info.entry_reasons and sym.kind == "module" and sym.callees:
+                add(path, sym, info.entry_reasons[0], "script")
+            elif info.entry_reasons and sym.kind == "function" and sym.name in _ROOT_FUNCS and sym.callees:
+                add(path, sym, f"`{sym.name}()` in an entry file", "main")
+    return sorted(roots.values(), key=lambda r: (rank[r["kind"]], r["path"], r["name"]))
+
+
+def _build(root: Path, name: str, churn_root: Path | None, explain: bool = True) -> tuple[dict, dict[str, FileInfo]]:
+    """Analyse one snapshot of a repository on disk."""
     root = Path(root)
     files: dict[str, FileInfo] = {}
     budget = MAX_TOTAL_SOURCE_BYTES
@@ -143,13 +184,14 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
             info.truncated = True
         files[rel] = info
 
-    churn = git_churn(root)
+    churn = git_churn(churn_root) if churn_root else None
     if churn:
         for p, n in churn.items():
             if p in files:
                 files[p].churn = n
 
     resolve_imports(files)
+    call_stats = resolve_calls(files, py_index(set(files)))
     _declared_entry_points(root, files)
     _mark_entries_and_tests(files)
     _mark_unused(files)
@@ -160,17 +202,47 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
         entry["files"] += 1
         entry["loc"] += f.loc
     edges = [[f.path, t] for f in files.values() for t in f.imports]
-    return {
+    repo = {
+        "name": name,
+        "files": len(files),
+        "loc": sum(f.loc for f in files.values()),
+        "languages": langs,
+        "hasHistory": churn is not None,
+        "git": git_summary(churn_root) if churn_root else {},
+    }
+    reading_order = _reading_order(files)
+    flow_roots = _flow_roots(files)
+    explained = explain_repo(files, flow_roots, reading_order, repo) if explain else {}
+    data = {
         "version": __version__,
-        "repo": {
-            "name": name or root.name,
-            "files": len(files),
-            "loc": sum(f.loc for f in files.values()),
-            "languages": langs,
-            "hasHistory": churn is not None,
-            "git": git_summary(root),
-        },
+        "repo": repo,
         "files": [files[p].to_dict() for p in sorted(files)],
         "edges": edges,
-        "readingOrder": _reading_order(files),
+        "readingOrder": reading_order,
+        "flowRoots": flow_roots,
+        "explain": explained,
+        "callStats": call_stats,
+        "duplicates": find_duplicates(files)[:25],
     }
+    return data, files
+
+
+def analyze_repo(root: Path, name: str | None = None, base: str | None = None, head: str | None = None) -> dict:
+    """Analyse a repository. With `base`, also review the change from `base` to
+    `head` (or to the working tree when `head` is not given)."""
+    root = Path(root)
+    name = name or root.name
+    with contextlib.ExitStack() as stack:
+        src = root
+        if head:
+            resolve_ref(root, head)
+            src = stack.enter_context(snapshot(root, head))
+        data, files = _build(src, name, churn_root=root)
+        if base:
+            resolve_ref(root, base)
+            base_root = stack.enter_context(snapshot(root, base))
+            _, base_files = _build(base_root, name, churn_root=None, explain=False)
+            changes = compare(root, base, head, base_files, files, data["flowRoots"])
+            data["changes"] = changes
+            data["explain"]["story"][1:1] = story_steps(changes)
+    return data

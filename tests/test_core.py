@@ -65,7 +65,7 @@ def test_report_embeds_data_safely():
     d["files"][0]["source"] = "</script><script>alert(1)</script>"
     html = render_html(d)
     assert "</script><script>alert(1)" not in html
-    assert html.count("<script") == 2
+    assert html.count("<script") == 3  # data, serve flag, app code
     assert "{{" not in html
 
 
