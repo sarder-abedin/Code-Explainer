@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}} · Code Explainer</title>
+<style>{{STYLE}}</style>
+</head>
+<body>
+<header>
+  <div class="brand" id="brand"></div>
+  <nav id="tabs">
+    <button data-tab="overview">Overview</button>
+    <button data-tab="treemap">Treemap</button>
+    <button data-tab="graph">Dependencies</button>
+  </nav>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search files and symbols  ( / )" autocomplete="off" spellcheck="false">
+    <div id="results" hidden></div>
+  </div>
+</header>
+<main>
+  <section id="view"></section>
+  <aside id="detail" hidden></aside>
+</main>
+<script type="application/json" id="data">{{DATA}}</script>
+<script>{{SCRIPT}}</script>
+</body>
+</html>

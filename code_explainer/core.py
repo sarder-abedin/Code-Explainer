@@ -1,0 +1,176 @@
+"""Orchestrates ingest -> analysis -> resolution -> metrics into one report dict."""
+
+from __future__ import annotations
+
+import json
+import posixpath
+import re
+from collections import deque
+from pathlib import Path
+
+from . import __version__
+from .analysis import CODE_LANGS, analyze_file, detect_language
+from .ingest import git_churn, git_summary, list_files
+from .model import FileInfo
+from .resolve import resolve_imports
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    tomllib = None  # type: ignore[assignment]
+
+MAX_SOURCE_BYTES = 300_000
+MAX_TOTAL_SOURCE_BYTES = 25_000_000
+_TEST_RE = re.compile(r"(^|/)(tests?|__tests__|spec|specs)/|(^|/)test_[^/]*$|_test\.\w+$|\.(test|spec)\.\w+$|(^|/)conftest\.py$")
+_ENTRY_STEMS = {"main", "app", "cli", "server", "manage", "wsgi", "asgi", "__main__", "run", "index"}
+_NEVER_UNUSED = {"__init__.py", "setup.py", "conftest.py", "__main__.py", "manage.py", "wsgi.py", "asgi.py"}
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _declared_entry_points(root: Path, files: dict[str, FileInfo]) -> None:
+    """Entry points declared in pyproject.toml / package.json."""
+    pyproject = root / "pyproject.toml"
+    if tomllib and pyproject.is_file():
+        try:
+            data = tomllib.loads(_read(pyproject))
+        except Exception:
+            data = {}
+        scripts = {**data.get("project", {}).get("scripts", {}),
+                   **data.get("tool", {}).get("poetry", {}).get("scripts", {})}
+        for cmd, target in scripts.items():
+            module = str(target).split(":")[0].strip().split("[")[0]
+            parts = module.split(".")
+            hit = None
+            for i in range(len(parts)):  # tolerate src/ layouts
+                for cand in ("/".join(parts[i:]) + ".py", "/".join(parts[i:]) + "/__init__.py"):
+                    hit = next((p for p in files if p == cand or p.endswith("/" + cand)), None)
+                    if hit:
+                        break
+                if hit:
+                    break
+            if hit:
+                files[hit].entry_reasons.append(f"console script `{cmd}` (pyproject.toml)")
+    pkg = root / "package.json"
+    if pkg.is_file():
+        try:
+            data = json.loads(_read(pkg))
+        except ValueError:
+            return
+        declared = []
+        if isinstance(data.get("main"), str):
+            declared.append(("main", data["main"]))
+        bins = data.get("bin")
+        if isinstance(bins, str):
+            declared.append(("bin", bins))
+        elif isinstance(bins, dict):
+            declared += [(f"bin `{k}`", v) for k, v in bins.items() if isinstance(v, str)]
+        for label, rel in declared:
+            p = posixpath.normpath(rel)
+            for cand in (p, p + ".js", p + "/index.js"):
+                if cand in files:
+                    files[cand].entry_reasons.append(f"package.json {label}")
+                    break
+
+
+def _mark_entries_and_tests(files: dict[str, FileInfo]) -> None:
+    for info in files.values():
+        info.is_test = bool(_TEST_RE.search(info.path))
+        stem = posixpath.splitext(posixpath.basename(info.path))[0]
+        depth = info.path.count("/")
+        if (info.lang in CODE_LANGS and not info.is_test and depth <= 2
+                and stem in _ENTRY_STEMS and not info.entry_reasons):
+            info.entry_reasons.append("file name suggests an entry point")
+
+
+def _mark_unused(files: dict[str, FileInfo]) -> None:
+    for info in files.values():
+        info.possibly_unused = (
+            info.lang in CODE_LANGS and info.analyzed and not info.is_test
+            and not info.imported_by and not info.entry_reasons
+            and posixpath.basename(info.path) not in _NEVER_UNUSED
+        )
+
+
+def _reading_order(files: dict[str, FileInfo], limit: int = 25) -> list[dict]:
+    """Entry points first, then what they depend on, most-depended-on first."""
+    code = {p: f for p, f in files.items() if f.lang in CODE_LANGS and not f.is_test}
+    entries = sorted((p for p, f in code.items() if f.entry_reasons),
+                     key=lambda p: (-len(code[p].imports), p))
+    order: list[dict] = []
+    seen: set[str] = set()
+    queue = deque()
+    for p in entries:
+        seen.add(p)
+        order.append({"path": p, "why": "Entry point: " + code[p].entry_reasons[0]})
+        queue.append(p)
+    while queue and len(order) < limit:
+        cur = queue.popleft()
+        for dep in sorted(code[cur].imports if cur in code else [],
+                          key=lambda d: (-len(files[d].imported_by), d)):
+            if dep in seen or dep not in code:
+                continue
+            seen.add(dep)
+            n = len(files[dep].imported_by)
+            order.append({"path": dep, "why": f"Used by {n} file{'s' if n != 1 else ''}; imported from {posixpath.basename(cur)}"})
+            queue.append(dep)
+            if len(order) >= limit:
+                break
+    if not order:  # no entry points found: fall back to the most central files
+        for p in sorted(code, key=lambda p: (-len(code[p].imported_by), p))[:limit]:
+            if code[p].imported_by:
+                order.append({"path": p, "why": f"Imported by {len(code[p].imported_by)} files"})
+    return order
+
+
+def analyze_repo(root: Path, name: str | None = None) -> dict:
+    root = Path(root)
+    files: dict[str, FileInfo] = {}
+    budget = MAX_TOTAL_SOURCE_BYTES
+    for rel in list_files(root):
+        try:
+            text = _read(root / rel)
+        except OSError:
+            continue
+        info = analyze_file(rel, detect_language(rel), text)
+        info.size = len(text.encode("utf-8", errors="replace"))
+        if info.size <= MAX_SOURCE_BYTES and budget >= info.size:
+            info.source = text
+            budget -= info.size
+        else:
+            info.truncated = True
+        files[rel] = info
+
+    churn = git_churn(root)
+    if churn:
+        for p, n in churn.items():
+            if p in files:
+                files[p].churn = n
+
+    resolve_imports(files)
+    _declared_entry_points(root, files)
+    _mark_entries_and_tests(files)
+    _mark_unused(files)
+
+    langs: dict[str, dict] = {}
+    for f in files.values():
+        entry = langs.setdefault(f.lang, {"files": 0, "loc": 0})
+        entry["files"] += 1
+        entry["loc"] += f.loc
+    edges = [[f.path, t] for f in files.values() for t in f.imports]
+    return {
+        "version": __version__,
+        "repo": {
+            "name": name or root.name,
+            "files": len(files),
+            "loc": sum(f.loc for f in files.values()),
+            "languages": langs,
+            "hasHistory": churn is not None,
+            "git": git_summary(root),
+        },
+        "files": [files[p].to_dict() for p in sorted(files)],
+        "edges": edges,
+        "readingOrder": _reading_order(files),
+    }
