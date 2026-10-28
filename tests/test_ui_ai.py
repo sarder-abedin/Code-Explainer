@@ -388,7 +388,7 @@ def test_answers_follow_the_explain_level_from_the_top_menu(ai):
     ask(ai, "q2")
     ai.page.wait_for_function("document.querySelectorAll('.ai-msg.assistant .ai-stats').length === 2")
     body = [r["body"] for r in ai.fake.requests if r["path"] == "/api/chat" and r["body"]["messages"]][-1]
-    assert "8-year-old" in body["messages"][0]["content"]
+    assert "complete beginner" in body["messages"][0]["content"]
 
 
 def test_the_open_file_can_be_sent_as_context(ai):

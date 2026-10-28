@@ -1,7 +1,7 @@
 # Code Explainer
 
 Code written by a coding agent (or someone else) is hard to follow once there is a lot of it.
-Code Explainer turns a repository into an interactive map that anyone can read, from a child to a
+Code Explainer turns a repository into an interactive map that anyone can read, from a complete beginner to a
 senior engineer, using nothing but static analysis. There is no AI model, no network call and no
 API key: every sentence is worked out from the code itself.
 
@@ -16,8 +16,8 @@ The core needs only the Python standard library (plus `tomli` on Python 3.10, wh
 
 ## Explained at three levels
 
-A menu at the top switches every explanation between **like I'm 8**, **plain English** and
-**technical**. The "like I'm 8" level tells the story of a big house: folders are floors, files are
+A menu at the top switches every explanation between **beginner-friendly**, **plain English** and
+**technical**. The beginner-friendly level tells the story of a big house: folders are floors, files are
 rooms, functions are helpers who each do one job, classes are recipes, importing is borrowing
 tools, calling is asking a helper for a favour.
 
@@ -92,7 +92,7 @@ the internet, and nothing runs until you press **Start AI Explainer**.
   you quit. A server that was already running, or a model you had loaded yourself, is left alone.
 - **Tune the answers:** presets (Precise, Balanced, Creative), temperature, top-p, top-k, min-p, answer length,
   context size, repeat penalty, seed, answer length and your own extra instructions. Controls a server cannot use
-  are greyed out with the reason. Answers follow the "Explain" level in the top menu (like I'm 8 / plain / technical).
+  are greyed out with the reason. Answers follow the "Explain" level in the top menu (beginner-friendly / plain English / technical).
 - **Grounded in your code, with sources:** before each question the tool searches the whole project (functions,
   classes, docstrings, docs, and the call and import graphs) and gives the model only the relevant code, numbered by
   line. The call graph is handed over as exact facts ("`total` is called by `main`"), so the model does not have to

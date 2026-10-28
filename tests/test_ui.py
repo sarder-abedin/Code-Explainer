@@ -28,6 +28,8 @@ def test_report_renders_and_navigates(tmp_path):
         assert page.locator("text=The big picture").count()
         page.click("text=Next ▶")
         assert page.locator("text=The floors of the house").count()
+        labels = page.locator("#level option").all_inner_texts()
+        assert labels == ["Beginner-friendly", "Plain English", "Technical"]
         page.select_option("#level", "plain")
         assert page.locator("text=Folder layout").count()
         page.click("[data-tab=overview]")
