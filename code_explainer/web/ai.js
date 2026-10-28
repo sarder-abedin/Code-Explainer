@@ -31,7 +31,10 @@ function renderAI(view) {
     view.append(h("div", { class: "card ai-static" }, h("h2", { style: "margin-top:0" }, "AI Explainer"),
       h("p", {}, "The AI Explainer talks to a model running on your own computer (Ollama, LM Studio or any OpenAI-compatible server). "
         + "A saved report is just a file, so it cannot start or talk to one."),
-      h("p", {}, "To use it, run ", h("code", {}, "code-explainer serve <your repo>"), " and open the AI tab there.")));
+      h("p", {}, "To use it, run ", h("code", {}, "code-explainer serve <your repo>"), " and open the AI tab there."),
+      D.aiExplain ? h("p", { class: "aix-static-note" }, `This report already contains ${Object.keys(D.aiExplain.items).length} explanations written ahead of time by `,
+        h("strong", {}, D.aiExplain.model), ". Look for the “AI explanation” sections on files and changes.")
+        : h("p", { class: "hint" }, "Tip: ", h("code", {}, "code-explainer analyze <repo> --ai"), " writes AI explanations of the most important files into the report ahead of time.")));
     return;
   }
   view.append(h("div", { id: "ai-root", class: "ai" },
@@ -631,12 +634,28 @@ const AIX = new Map();
 const aixKey = t => [LEVEL, t.kind, t.path, t.symbol || "", t.parent || ""].join("|");
 
 function aixControls(target, compact) {
-  if (!SERVE) return null;
+  if (!SERVE) return aixBaked(target);
   if ((target.kind === "symbol" || target.kind === "flow") && (!target.symbol || target.symbol === "<module>")) return null;
   const el = h("div", { class: "aix", "data-aix": aixKey(target) });
   el._target = target; el._compact = !!compact;
   aixFill(el);
   return el;
+}
+
+// A static report cannot talk to a model, but `analyze --ai` can write explanations into it ahead of time.
+// They are shown read-only, and always labelled as AI-written.
+const AIX_LEVELS = { kid: "child-friendly", plain: "plain-English", tech: "technical" };
+function aixBaked(target) {
+  const b = D.aiExplain, item = b && b.items && b.items[target.kind + "|" + target.path];
+  if (!item) return null;
+  const text = h("div", { class: "aix-text" });
+  aiRenderText(text, item.text);
+  return h("div", { class: "aix aix-baked", "data-kind": target.kind },
+    h("div", { class: "aix-box" },
+      h("div", { class: "aix-head" }, h("span", { class: "badge aix-label" }, "AI explanation"),
+        h("span", { class: "hint" }, `Written ahead of time by ${b.model} (${AIX_LEVELS[b.level] || b.level}${b.generated ? ", " + b.generated : ""}). `
+          + "AI can make mistakes: check it against the code.")),
+      text));
 }
 
 function aixFill(el) {

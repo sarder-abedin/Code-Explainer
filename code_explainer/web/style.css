@@ -190,4 +190,7 @@ span.ai-cite.bad{color:var(--warn);text-decoration:line-through dotted;cursor:he
 .aix-note{margin-top:6px;font-size:13px;border-left:3px solid var(--muted);padding-left:8px}
 .aix-note.error{border-color:var(--warn);color:var(--warn)}.aix-note.warn{border-color:#e0a030}
 .ai-cacherow{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.ai-cacherow .hint:last-child{flex-basis:100%}
+.aix-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+.aix-label{font-weight:600}
+.aix-baked{margin:8px 0}
 .aix-text{white-space:pre-wrap;word-break:break-word;line-height:1.55}
