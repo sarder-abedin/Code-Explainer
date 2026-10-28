@@ -83,5 +83,9 @@ playwright install chromium     # for the browser tests; or set CHROMIUM_PATH
 pytest
 ```
 
+Work test-first: run the whole suite before you change anything (so you know the baseline is
+green), write a failing test for the new behaviour or bug, make it pass, then run the whole suite
+again. CI enforces a coverage floor (90%, or 80% without tree-sitter).
+
 CI runs the tests on Python 3.10 to 3.13, with and without tree-sitter, plus a browser test and
 a package build. Pushing a `v*` tag publishes to PyPI (trusted publishing) and creates a GitHub release.
