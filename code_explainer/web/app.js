@@ -1,8 +1,7 @@
 (() => {
 "use strict";
-const D = JSON.parse(document.getElementById("data").textContent);
-const FILES = D.files;
-const BY = new Map(FILES.map(f => [f.path, f]));
+let D, FILES, BY, SYMS, EX, CH, langs, LANG_COLOR;
+const SERVE = JSON.parse(document.getElementById("serve").textContent); // null in a static export
 const SVGNS = "http://www.w3.org/2000/svg";
 
 // ---------- helpers ----------
@@ -29,13 +28,20 @@ const fmt = n => n.toLocaleString();
 const base = p => p.slice(p.lastIndexOf("/") + 1);
 const dirOf = p => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#edc948", "#76b7b2", "#e15759", "#9c755f", "#af7aa1", "#86bcb6", "#bab0ac"];
-const langs = Object.entries(D.repo.languages).sort((a, b) => b[1].loc - a[1].loc);
-const LANG_COLOR = Object.fromEntries(langs.map(([n], i) => [n, PALETTE[i % PALETTE.length]]));
 const maxOf = k => Math.max(1, ...FILES.map(f => k(f)));
 
-const SYMS = new Map();
-for (const f of FILES) for (const sym of f.symbols) SYMS.set(`${f.path}::${sym.qual}`, { sym, file: f });
-const EX = D.explain || { folders: {}, story: [], glossary: [] };
+// Everything derived from the analysis lives here so serve mode can swap in fresh data.
+function setData(data) {
+  D = data; FILES = D.files;
+  BY = new Map(FILES.map(f => [f.path, f]));
+  SYMS = new Map();
+  for (const f of FILES) for (const sym of f.symbols) SYMS.set(`${f.path}::${sym.qual}`, { sym, file: f });
+  EX = D.explain || { folders: {}, story: [], glossary: [] };
+  CH = D.changes || null;
+  langs = Object.entries(D.repo.languages).sort((a, b) => b[1].loc - a[1].loc);
+  LANG_COLOR = Object.fromEntries(langs.map(([n], i) => [n, PALETTE[i % PALETTE.length]]));
+  if (CH) METRICS.changed = { label: "Changed in this review" }; else delete METRICS.changed;
+}
 let LEVEL = "kid";
 try { LEVEL = localStorage.getItem("ce.level") || "kid"; } catch (e) { /* storage may be blocked */ }
 if (!["kid", "plain", "tech"].includes(LEVEL)) LEVEL = "kid";
@@ -44,8 +50,7 @@ const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
 const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
 // `code` spans in generated text become <code> elements.
 const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
-const CH = D.changes || null;
-const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: CH ? "changed" : "lang", tmRoot: "", expanded: new Set(),
+const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
   flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
@@ -205,7 +210,16 @@ function renderOverview(view) {
        [r.git && r.git.commits != null ? fmt(r.git.commits) : "n/a", "commits"]].map(([n, l]) =>
         h("div", { class: "card" }, h("div", { class: "n" }, n), h("div", { class: "l" }, l)))),
     bar, legend,
+    (() => {
+      const ps = progressStats();
+      return h("div", { class: "card prog-card" }, h("div", {}, h("b", {}, "Your progress "), `${ps.done} of ${ps.n} files understood (${ps.pct}% of the code by size)`),
+        h("div", { class: "pbar", role: "progressbar", "aria-valuenow": String(ps.pct), "aria-valuemin": "0", "aria-valuemax": "100" }, h("span", { style: `width:${ps.pct}%` })),
+        h("div", { class: "hint" }, "Tick “I understand this file” in the file panel as you go. " + (SERVE ? "Saved on this computer." : "Saved in this browser.")));
+    })(),
     h("div", { class: "cols" },
+      listOf("Next to learn", "from the reading order, skipping what you know",
+        D.readingOrder.filter(o => !isUnderstood(o.path)).slice(0, 6).map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
+      PROG.bookmarks.filter(p => BY.has(p)).length ? listOf("Bookmarks", "", PROG.bookmarks.filter(p => BY.has(p)).map(p => fileRow(BY.get(p), null, PROG.notes[p] ? PROG.notes[p].slice(0, 80) : ""))) : null,
       listOf("Start here", "read in this order",
         D.readingOrder.map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
       listOf("Hotspots", "most complex files",
@@ -233,8 +247,8 @@ const METRICS = {
   churn: { label: "Churn (commits)", val: f => f.churn },
   fanin: { label: "Imported by", val: f => f.importedBy.length },
   unused: { label: "Possibly unused" },
+  understood: { label: "What I understand" },
 };
-if (CH) METRICS.changed = { label: "Changed in this review" };
 function buildTree(prefix) {
   const root = { name: prefix || D.repo.name, path: prefix, children: new Map(), dir: true };
   for (const f of FILES) {
@@ -289,6 +303,7 @@ function tileColor(f) {
     const c = CH.files[f.path];
     return c ? { fill: c.status === "A" ? "#2e9e5b" : "#e0a030", op: 0.95 } : { fill: "#888", op: 0.12 };
   }
+  if (m === "understood") return isUnderstood(f.path) ? { fill: "#2e9e5b", op: 0.95 } : { fill: "#888", op: 0.15 };
   if (m === "unused") return f.unused ? { fill: "#e15759", op: 0.9 } : { fill: "#888", op: 0.15 };
   const mx = METRICS[m].max;
   const t = Math.sqrt(Math.min(1, METRICS[m].val(f) / mx));
@@ -347,6 +362,7 @@ function clip(text, w) { const n = Math.max(1, Math.floor((w - 8) / 6.2)); retur
 function legendFor() {
   if (state.colorBy === "lang") return h("div", { class: "legend hint" }, langs.slice(0, 10).map(([n]) => h("span", {}, h("i", { class: "dot", style: `background:${LANG_COLOR[n]}` }), n)));
   if (state.colorBy === "changed") return h("div", { class: "hint legend" }, h("span", {}, h("i", { class: "dot", style: "background:#2e9e5b" }), "new file"), h("span", {}, h("i", { class: "dot", style: "background:#e0a030" }), "changed or moved"), h("span", {}, "grey = untouched"));
+  if (state.colorBy === "understood") { const ps = progressStats(); return h("div", { class: "hint" }, `Green = you marked it understood (${ps.pct}% of the code so far). Grey = still to explore.`); }
   if (state.colorBy === "unused") return h("div", { class: "hint" }, "Red = no other file imports it and it is not an entry point.");
   return h("div", { class: "hint" }, `Darker = higher ${METRICS[state.colorBy].label.toLowerCase()} (max ${fmt(METRICS[state.colorBy].max)}).` +
     (state.colorBy === "churn" && !D.repo.hasHistory ? " No git history was available." : ""));
@@ -589,6 +605,7 @@ function renderDetail() {
   const f = state.selected && BY.get(state.selected);
   if (!f) { el.hidden = true; return; }
   el.hidden = false;
+  const keep = el.dataset.path === f.path ? ((el.querySelector(".dbody") || {}).scrollTop || 0) : 0;
   const badges = [h("span", { class: "badge" }, f.lang)];
   if (f.entry.length) badges.push(h("span", { class: "badge ok", title: f.entry.join("; ") }, "entry point"));
   if (f.isTest) badges.push(h("span", { class: "badge" }, "test"));
@@ -614,6 +631,7 @@ function renderDetail() {
     h("div", { class: "dhead" }, h("button", { class: "x", "aria-label": "Close", onclick: () => { state.selected = null; writeHash(); renderDetail(); markSelected(); } }, "✕"),
       h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null),
     h("div", { class: "dbody" },
+      progressControls(f),
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
@@ -627,17 +645,23 @@ function renderDetail() {
     c.scrollTop = Math.max(0, (state.line - 6) * 18);
     c.scrollIntoView({ block: "nearest" });
   }
-  document.querySelector(".dbody").scrollTop = state.line ? document.querySelector(".dbody").scrollTop : 0;
+  const body = el.querySelector(".dbody");
+  body.scrollTop = state.line ? body.scrollTop : keep;
+  el.dataset.path = f.path;
 }
 
 // ---------- search ----------
 function initSearch() {
   const input = document.getElementById("search"), box = document.getElementById("results");
-  const index = [];
-  for (const f of FILES) {
-    index.push({ label: base(f.path), path: f.path, kind: "file", f });
-    for (const sym of f.symbols) index.push({ label: sym.name, path: f.path, kind: sym.kind, line: sym.line, f });
-  }
+  let index = [], indexFor = null;
+  const ensureIndex = () => {
+    if (indexFor === D) return;
+    indexFor = D; index = [];
+    for (const f of FILES) {
+      index.push({ label: base(f.path), path: f.path, kind: "file", f });
+      for (const sym of f.symbols) index.push({ label: sym.name, path: f.path, kind: sym.kind, line: sym.line, f });
+    }
+  };
   let hits = [], cur = 0;
   const close = () => { box.hidden = true; hits = []; };
   const choose = i => { const x = hits[i]; if (!x) return; close(); input.blur(); openFile(x.path, x.line); };
@@ -649,6 +673,7 @@ function initSearch() {
   input.addEventListener("input", () => {
     const q = input.value.trim().toLowerCase();
     if (!q) return close();
+    ensureIndex();
     const scored = [];
     for (const x of index) {
       const l = x.label.toLowerCase(), p = x.path.toLowerCase();
@@ -670,11 +695,105 @@ function initSearch() {
   });
 }
 
+// ---------- progress, notes and bookmarks ----------
+const PROG = { understood: {}, notes: {}, bookmarks: [] };
+const progKey = () => "ce.progress." + (SERVE ? SERVE.id : D.repo.name);
+let toastTimer;
+function toast(msg, ms = 4000) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.hidden = !msg;
+  clearTimeout(toastTimer);
+  if (msg && ms) toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+async function loadProgress() {
+  let got = {};
+  try {
+    if (SERVE) got = await (await fetch("/api/progress")).json();
+    else got = JSON.parse(localStorage.getItem(progKey()) || "{}");
+  } catch (e) { /* no saved progress, or storage blocked */ }
+  PROG.understood = got.understood || {}; PROG.notes = got.notes || {}; PROG.bookmarks = got.bookmarks || [];
+}
+let saveTimer;
+function saveProgress() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      if (SERVE) {
+        const r = await fetch("/api/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(PROG) });
+        if (!r.ok) throw new Error(r.status);
+      } else localStorage.setItem(progKey(), JSON.stringify(PROG));
+    } catch (e) { toast("Could not save your progress here" + (SERVE ? "" : " (browser storage is blocked)"), 6000); }
+  }, 400);
+}
+const isUnderstood = p => !!PROG.understood[p];
+function progressStats() {
+  const files = FILES.filter(f => f.loc > 0);
+  const done = files.filter(f => isUnderstood(f.path));
+  const loc = files.reduce((a, f) => a + f.loc, 0), locDone = done.reduce((a, f) => a + f.loc, 0);
+  return { n: files.length, done: done.length, loc, locDone, pct: loc ? Math.round(100 * locDone / loc) : 0 };
+}
+function progressControls(f) {
+  const bm = PROG.bookmarks.includes(f.path);
+  const note = h("textarea", { class: "note", rows: 3, placeholder: "Your notes about this file (saved for you only)…", "aria-label": "Notes",
+    oninput: e => { const v = e.target.value; if (v.trim()) PROG.notes[f.path] = v; else delete PROG.notes[f.path]; saveProgress(); } });
+  note.value = PROG.notes[f.path] || "";
+  return h("div", { class: "dsec prog" },
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: isUnderstood(f.path),
+      onchange: e => { if (e.target.checked) PROG.understood[f.path] = true; else delete PROG.understood[f.path]; saveProgress(); refreshAfterProgress(); } }),
+      " I understand this file"),
+    h("button", { class: "star", "aria-pressed": String(bm), title: bm ? "Remove bookmark" : "Bookmark this file",
+      onclick: () => { PROG.bookmarks = bm ? PROG.bookmarks.filter(x => x !== f.path) : [...PROG.bookmarks, f.path]; saveProgress(); refreshAfterProgress(); } }, bm ? "★ Bookmarked" : "☆ Bookmark"),
+    note);
+}
+function refreshAfterProgress() {
+  // Re-render the main view (progress bar, colours) and the panel, without losing the notes box focus elsewhere.
+  const view = document.getElementById("view"), top = view.scrollTop;
+  renderAll(); view.scrollTop = top;
+}
+
+// ---------- live updates (serve mode) ----------
+function applyNewData(data, version) {
+  const prevTab = state.tab;
+  setData(data); SERVE.version = version;
+  if (state.selected && !BY.has(state.selected)) { state.selected = null; state.line = 0; }
+  if (state.flowRoot && !SYMS.has(state.flowRoot)) state.flowRoot = "";
+  if (state.tmRoot && !FILES.some(f => f.path.startsWith(state.tmRoot + "/"))) state.tmRoot = "";
+  if (state.colorBy === "changed" && !CH) state.colorBy = "lang";
+  state.storyStep = Math.min(state.storyStep, Math.max(0, EX.story.length - 1));
+  document.querySelector('#tabs [data-tab="changes"]').hidden = !CH;
+  if (prevTab === "changes" && !CH) state.tab = "overview";
+  renderShell(); renderAll();
+}
+function startLive() {
+  if (!SERVE) return;
+  const live = document.getElementById("live");
+  live.hidden = false;
+  let down = false;
+  setInterval(async () => {
+    try {
+      const v = await (await fetch("/api/version")).json();
+      if (down) { down = false; live.textContent = "● live"; live.className = "live"; }
+      if (v.error) { live.textContent = "● last update failed"; live.title = v.error; live.className = "live warn"; }
+      else { live.textContent = "● live"; live.title = ""; live.className = "live"; }
+      if (v.version !== SERVE.version) {
+        const r = await (await fetch("/api/data")).json();
+        applyNewData(r.data, r.version);
+        toast("The code changed: the map was refreshed.");
+      }
+    } catch (e) {
+      if (!down) { down = true; live.textContent = "● disconnected"; live.className = "live warn"; }
+    }
+  }, 2000);
+}
+
 // ---------- boot ----------
+setData(JSON.parse(document.getElementById("data").textContent));
+if (CH) state.colorBy = "changed";
 readHash();
 renderShell();
 initSearch();
 renderAll();
+loadProgress().then(() => { renderAll(); startLive(); });
 window.addEventListener("hashchange", () => { readHash(); renderAll(); });
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (state.tab !== "overview") renderAll(); }, 200); });
 })();

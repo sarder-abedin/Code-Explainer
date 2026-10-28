@@ -25,16 +25,19 @@
       <option value="tech">technical</option>
     </select>
   </label>
+  <span id="live" class="live" hidden></span>
   <div class="search">
     <input id="search" type="search" placeholder="Search files and symbols  ( / )" autocomplete="off" spellcheck="false">
     <div id="results" hidden></div>
   </div>
 </header>
+<div id="toast" role="status" hidden></div>
 <main>
   <section id="view"></section>
   <aside id="detail" hidden></aside>
 </main>
 <script type="application/json" id="data">{{DATA}}</script>
+<script type="application/json" id="serve">{{SERVE}}</script>
 <script>{{SCRIPT}}</script>
 </body>
 </html>
