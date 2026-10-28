@@ -17,6 +17,8 @@ from .explain import explain_repo
 from .calls import resolve_calls, sym_id
 from .diff import compare, resolve_ref, snapshot, story_steps
 from .duplicates import find_duplicates
+from .hygiene import scan as hygiene_scan
+from .testmap import annotate_changes, build_test_map
 from .resolve import py_index, resolve_imports
 
 try:
@@ -224,6 +226,9 @@ def _build(root: Path, name: str, churn_root: Path | None, explain: bool = True)
         "callStats": call_stats,
         "duplicates": find_duplicates(files)[:25],
     }
+    if explain:   # the base snapshot of a change review only needs the structure
+        data["tests"] = build_test_map(files)
+        data["hygiene"] = hygiene_scan(files)
     return data, files
 
 
@@ -245,4 +250,5 @@ def analyze_repo(root: Path, name: str | None = None, base: str | None = None, h
             changes = compare(root, base, head, base_files, files, data["flowRoots"])
             data["changes"] = changes
             data["explain"]["story"][1:1] = story_steps(changes)
+            annotate_changes(data)
     return data

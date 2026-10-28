@@ -53,6 +53,26 @@ blast radius (who depends on the change); which entry points can reach it; lefto
 nothing calls, code that lost its last caller, removals that unchanged code still uses); new
 copy-paste; complexity change; and a suggested reading order, riskiest first and tests last.
 
+## Health: tests and safety
+
+The **Health** tab answers two questions an agent's code leaves open, without running anything.
+
+- **Which tests reach which code?** Starting from every test function it follows the call graph and marks each
+  function as reached directly, reached through other code, reached only by a guess (`obj.method()` resolved from the
+  name), or not seen at all. Each file shows the tests that reach it and the functions that no test was seen reaching;
+  the tab lists the riskiest untested functions (complex, widely used, often changed). In a change review, new or
+  edited functions that no test reaches are called out on the change card and in a summary count.
+  This is a static estimate, not coverage: dynamic calls, fixtures and mocks are invisible to it.
+- **Is anything obviously unsafe?** A pattern check that explains each finding in plain words and says how to fix it:
+  `eval`/`exec`, shell commands built from text, database queries built from strings, unsafe `pickle`/`yaml.load`,
+  switched-off TLS checks, weak hashes, swallowed errors, `innerHTML` and similar in JavaScript, passwords and
+  well-known key formats written into code (shown masked, never in full), committed `.env` files and private keys,
+  files that import each other in a circle, and TODO/FIXME notes. Findings in test files are kept separate and less
+  serious. A finding is a place worth a look, not proof of a bug.
+
+The same facts are given to the local AI when you press Explain, so its explanation can mention that a function has no
+test or that a file has a safety note.
+
 ## Keep track of what you understand
 
 Tick "I understand this file", bookmark files and leave notes. The overview shows a progress bar
