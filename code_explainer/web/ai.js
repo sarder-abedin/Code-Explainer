@@ -5,7 +5,7 @@
 const AI = {
   ready: false, loading: false, settings: null, schema: null, providers: [], status: { state: "off" },
   selected: { provider: "", endpoint: "", model: "" }, showAll: false, saved: false, savedTimer: null,
-  pending: null, saveTimer: null, poll: null, useContext: true, addError: "", startError: "", advancedOpen: false,
+  pending: null, saveTimer: null, poll: null, useContext: true, ground: true, addError: "", startError: "", advancedOpen: false,
   form: { provider: "ollama", url: "", name: "", key: "" },
   chat: { messages: [], streaming: false, ctl: null, cur: null, draft: "", sentOpen: new Set(), nextId: 1 },
 };
@@ -361,17 +361,61 @@ function aiFlash() {
 }
 
 // ---------- chat ----------
+// A model may cite code as `path:line` or `path:start-end`. Only citations that point at a real file and a real line become
+// links; the rest are shown plainly, marked, with the reason, so an invented citation is easy to spot.
+const AI_CITE = /([\w./-]+\.[A-Za-z][A-Za-z0-9]{0,5}):(\d+)(?:-(\d+))?/g;
+
+function aiResolveCite(name, line) {
+  let path = BY.has(name) ? name : null;
+  if (!path) {
+    const hits = FILES.filter(f => f.path === name || f.path.endsWith("/" + name));
+    if (hits.length > 1) return { ok: false, why: `ambiguous: ${hits.length} files match ${name}` };
+    if (hits.length === 1) path = hits[0].path;
+  }
+  if (!path) return { ok: false, why: "not found in this project" };
+  const lines = BY.get(path).lines || 0;
+  if (line < 1 || line > Math.max(lines, 1)) return { ok: false, why: `${path} has only ${lines} lines` };
+  return { ok: true, path };
+}
+
+function aiOpenCode(path, line) { openFile(path, line); }
+
+function aiCiteNodes(text) {
+  const out = [];
+  let last = 0;
+  for (const m of text.matchAll(AI_CITE)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const line = +m[2], r = aiResolveCite(m[1], line);
+    if (r.ok) {
+      out.push(h("a", { class: "ai-cite", href: "#", title: `Open ${r.path} at line ${line}`,
+        onclick: e => { e.preventDefault(); aiOpenCode(r.path, line); } }, m[0]));
+    } else out.push(h("span", { class: "ai-cite bad", title: r.why }, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+// `code` -> <code> and citations -> links, as DOM nodes.
+function aiSpans(text) {
+  const out = [];
+  text.split(/`([^`\n]+)`/).forEach((piece, j) => {
+    if (piece) out.push(j % 2 ? h("code", {}, aiCiteNodes(piece)) : h("span", {}, aiCiteNodes(piece)));
+  });
+  return out;
+}
+
+// **bold** -> <strong> (which may contain code and citations). Nothing else is interpreted.
+function aiInline(parent, text) {
+  text.split(/\*\*([^*\n]+)\*\*/).forEach((seg, i) => {
+    if (seg) parent.append(i % 2 ? h("strong", {}, aiSpans(seg)) : h("span", {}, aiSpans(seg)));
+  });
+}
+
 function aiRenderText(parent, text) {
-  // Fenced blocks become <pre>, `inline code` becomes <code>; everything else is plain text.
-  const parts = String(text).split(/```/);
-  parts.forEach((part, i) => {
-    if (i % 2 === 1) {
-      const body = part.replace(/^[^\n]*\n/, "");
-      parent.append(h("pre", { class: "ai-code" }, body.replace(/\n$/, "")));
-    } else if (part) {
-      // **bold** becomes <strong>; `code` becomes <code>; nothing else is interpreted.
-      part.split(/\*\*([^*\n]+)\*\*/).forEach((seg, j) => parent.append(j % 2 ? h("strong", {}, seg) : h("span", {}, rich(seg))));
-    }
+  String(text).split(/```/).forEach((part, i) => {
+    if (i % 2 === 1) parent.append(h("pre", { class: "ai-code" }, part.replace(/^[^\n]*\n/, "").replace(/\n$/, "")));
+    else if (part) aiInline(parent, part);
   });
 }
 
@@ -389,9 +433,12 @@ function aiPaintChat() {
     h("div", { class: "ai-phead" }, h("h2", { style: "margin:0" }, "Ask the AI"), h("button", { id: "ai-clear", onclick: aiClear }, "Clear")),
     h("div", { id: "ai-chat-hint", class: "hint" }),
     h("div", { id: "ai-log", class: "ai-log", "aria-live": "polite" }),
+    h("div", { class: "ai-ctx" }, h("input", { type: "checkbox", id: "ai-ground", checked: AI.ground,
+      onchange: e => { AI.ground = e.target.checked; } }),
+      h("label", { for: "ai-ground" }, " Search the whole project for relevant code (recommended)")),
     path ? h("div", { class: "ai-ctx" }, h("input", { type: "checkbox", id: "ai-context", checked: AI.useContext,
       onchange: e => { AI.useContext = e.target.checked; } }),
-      h("label", { for: "ai-context" }, ` Include the open file (${path}) as context`)) : null,
+      h("label", { for: "ai-context" }, ` Focus on the open file (${path})`)) : null,
     h("div", { class: "ai-compose" }, input,
       h("div", { class: "ai-buttons" }, h("button", { id: "ai-send", class: "primary", onclick: aiSend }, "Send"),
         h("button", { id: "ai-chat-stop", hidden: true, onclick: aiStopAnswer }, "Stop")))));
@@ -425,6 +472,13 @@ function aiMessageEl(m) {
   el.append(text);
   if (m.role === "assistant") {
     if (m.thinking && !m.text && !m.done) el.append(h("div", { class: "hint ai-thinking" }, "Thinking…"));
+    if (m.retrievalNote) el.append(h("div", { class: "ai-retrieval hint" }, m.retrievalNote));
+    if (m.sent && m.sent.sources && m.sent.sources.length) {
+      el.append(h("div", { class: "ai-sources" }, h("span", { class: "hint" }, "Based on: "),
+        m.sent.sources.map(src => h("a", { class: "ai-source", href: "#", title: src.reason,
+          onclick: e => { e.preventDefault(); aiOpenCode(src.path, src.line); } },
+          `${src.path}:${src.line}-${src.end} ${src.label}`))));
+    }
     if (m.note) el.append(h("div", { class: `ai-note ${m.note.kind}` }, m.note.text));
     if (m.stats) el.append(h("div", { class: "ai-stats hint" }, m.stats));
     if (m.sent) {
@@ -432,7 +486,8 @@ function aiMessageEl(m) {
       el.append(h("button", { class: "ai-show-sent", onclick: () => { open ? AI.chat.sentOpen.delete(m.id) : AI.chat.sentOpen.add(m.id); aiPaintLog(); } },
         open ? "Hide what was sent" : "Show what was sent"));
       if (open) el.append(h("pre", { class: "ai-sent-body" }, JSON.stringify(
-        { provider: m.sent.provider, model: m.sent.model, options: m.sent.options, trimmed: m.sent.trimmed, messages: m.sent.messages }, null, 2)));
+        { provider: m.sent.provider, model: m.sent.model, options: m.sent.options, trimmed: m.sent.trimmed,
+          retrieval: m.sent.retrieval, sources: m.sent.sources, messages: m.sent.messages }, null, 2)));
     }
   }
   return el;
@@ -452,16 +507,6 @@ function aiClear() {
   AI.chat.messages = []; AI.chat.sentOpen.clear(); aiPaintLog();
 }
 
-function aiContextText() {
-  const path = aiFilePath();
-  if (!path || !AI.useContext) return "";
-  const f = BY.get(path);
-  if (!f || !f.source) return "";
-  const lines = f.source.split("\n");
-  const numbered = lines.map((l, i) => `${String(i + 1).padStart(4)}| ${l}`).join("\n");
-  return `File: ${path}\n${numbered.length > 30000 ? numbered.slice(0, 30000) + "\n…(file cut here)" : numbered}`;
-}
-
 async function aiSend() {
   const input = aiEl("ai-input");
   const text = (input ? input.value : AI.chat.draft).trim();
@@ -476,7 +521,9 @@ async function aiSend() {
   const ctl = new AbortController();
   AI.chat.ctl = ctl;
   aiPaintLog(); aiPaintChatControls();
-  const body = { messages: [...history, { role: "user", content: text }], params: { level: LEVEL === "tech" ? "tech" : LEVEL }, context: aiContextText() };
+  const focusPath = AI.useContext ? aiFilePath() : "";
+  const body = { messages: [...history, { role: "user", content: text }], params: { level: LEVEL }, ground: AI.ground,
+    focus: focusPath ? { path: focusPath } : null };
   try {
     const r = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
     if (!r.ok) {
@@ -510,6 +557,9 @@ function aiOnEvent(cur, ev) {
   switch (ev.type) {
     case "start":
       cur.sent = ev; cur.rid = ev.id;
+      if (ev.retrieval && ev.retrieval.error) cur.retrievalNote = "Searching the project failed, so this answer does not use the project's code.";
+      else if (ev.retrieval && ev.retrieval.enabled && !ev.retrieval.matched)
+        cur.retrievalNote = "No matching code was found in the project, so this answer comes from your question alone and may be a guess.";
       if (ev.trimmed && (ev.trimmed.dropped || ev.trimmed.truncated))
         cur.note = { kind: "info", text: "Part of the conversation or your text was left out to fit the model's memory (context size)." };
       aiUpdateCurrent(cur); break;

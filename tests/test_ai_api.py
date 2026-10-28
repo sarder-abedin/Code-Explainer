@@ -351,3 +351,57 @@ def test_switching_models_cancels_the_answer_in_progress(api):
     t.join(10)
     assert code == 200 and not t.is_alive() and got[-1]["type"] in ("cancelled", "error")
     assert wait_until(lambda: status(base)["state"] == "ready" and status(base)["model"] == "llama3.2:3b", 10)
+
+
+# ======================================================================= step 4: sources over HTTP
+@pytest.fixture
+def shop_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODE_EXPLAINER_HOME", str(tmp_path / "home"))
+    proj = tmp_path / "proj"
+    (proj / "shop").mkdir(parents=True)
+    (proj / "shop" / "pricing.py").write_text(
+        'def total(items):\n    """Add up the price of every item."""\n    return sum(i.price for i in items)\n')
+    session = Session(proj, "proj", None, None)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(session))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    fakes = []
+
+    def fake(routes):
+        f = FakeServer(routes)
+        fakes.append(f)
+        return f
+    yield f"http://127.0.0.1:{httpd.server_port}", fake, session, proj
+    session.ai.shutdown()
+    httpd.shutdown()
+    httpd.server_close()
+    for f in fakes:
+        f.stop()
+
+
+def ask_http(base, text, **extra):
+    return sse_events(base, "/api/ai/chat", {"messages": [{"role": "user", "content": text}], **extra})[2]
+
+
+def test_http_answers_report_their_sources_and_follow_live_changes(shop_api):
+    base, fake, session, proj = shop_api
+    s = chat_fake(fake, ndjson_route(ollama_tokens("ok")))
+    start_ai(base, s.url)
+    ev = ask_http(base, "How is the total price calculated?")
+    assert ev[0]["sources"][0]["path"] == "shop/pricing.py" and ev[0]["sources"][0]["label"] == "total"
+    assert ev[0]["retrieval"]["enabled"] is True and "sum(i.price" in ev[0]["messages"][0]["content"]
+    # the code changes while the server runs; the next question sees the new function
+    (proj / "shop" / "shipping.py").write_text('def shipping_cost(weight):\n    """Work out the cost of shipping a parcel."""\n    return weight * 2\n')
+    before = ask_http(base, "how is shipping cost worked out")[0]["sources"]
+    assert "shipping_cost" not in [x["label"] for x in before]                   # not analysed yet, so not findable yet
+    session.refresh()
+    ev = ask_http(base, "how is shipping cost worked out")
+    assert ev[0]["sources"][0]["label"] == "shipping_cost"
+
+
+def test_http_ground_false_and_focus(shop_api):
+    base, fake, session, proj = shop_api
+    s = chat_fake(fake, ndjson_route(ollama_tokens("ok")))
+    start_ai(base, s.url)
+    assert ask_http(base, "How is the total price calculated?", ground=False)[0]["sources"] == []
+    ev = ask_http(base, "explain this", focus={"path": "shop/pricing.py"})
+    assert ev[0]["sources"][0]["path"] == "shop/pricing.py" and ev[0]["sources"][0]["reason"] == "the file you have open"
