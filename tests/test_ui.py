@@ -72,3 +72,58 @@ def test_changes_tab(repo, tmp_path):
         assert page.locator("select option[value=changed]").count() == 1
         assert errors == []
         browser.close()
+
+
+def test_serve_mode_progress_and_live_reload(tmp_path, monkeypatch):
+    import json
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import code_explainer.server as srv
+
+    monkeypatch.setenv("CODE_EXPLAINER_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(srv, "POLL_SECONDS", 0.2)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "a.py").write_text("def a():\n    return 1\n")
+    session = srv.Session(proj, "proj", None, None)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.make_handler(session))
+    stop = threading.Event()
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    threading.Thread(target=session.watch, args=(stop,), daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_port}"
+    try:
+        with sync_api.sync_playwright() as p:
+            try:
+                exe = os.environ.get("CHROMIUM_PATH")
+                browser = p.chromium.launch(executable_path=exe, args=["--no-sandbox"]) if exe else p.chromium.launch()
+            except Exception as e:
+                pytest.skip(str(e))
+            page = browser.new_page(viewport={"width": 1300, "height": 900})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(base + "/#tab=overview&f=a.py")
+            page.wait_for_selector("#detail:not([hidden]) input[type=checkbox]")
+            page.check("#detail input[type=checkbox]")
+            page.fill("#detail textarea.note", "start here")
+            page.wait_for_function("document.getElementById('live') && !document.getElementById('live').hidden")
+            for _ in range(40):  # saves are debounced
+                saved = json.loads(urllib.request.urlopen(base + "/api/progress").read())
+                if saved["understood"] and saved["notes"]:
+                    break
+                page.wait_for_timeout(100)
+            assert saved["understood"] == {"a.py": True} and saved["notes"] == {"a.py": "start here"}
+            assert page.locator("text=1 of 1 files understood").count()
+            (proj / "b.py").write_text("def b():\n    return 2\n")
+            page.wait_for_selector("text=The code changed", timeout=15000)
+            assert page.locator("text=1 of 2 files understood").count()
+            page.reload()  # progress survives a reload
+            page.wait_for_selector("#detail:not([hidden])")
+            assert page.locator("#detail input[type=checkbox]").is_checked()
+            assert errors == []
+            browser.close()
+    finally:
+        stop.set()
+        httpd.shutdown()
+        httpd.server_close()
