@@ -6,12 +6,14 @@ import threading
 
 from .chat import ChatService
 from .lifecycle import Lifecycle
+from .retrieval import Retriever
 
 
 class AIRuntime:
-    def __init__(self, **lifecycle_kwargs):
+    def __init__(self, get_data=None, **lifecycle_kwargs):
+        """`get_data()` returns (version, analysis data); without it answers are not grounded in the repository."""
         self.lifecycle = Lifecycle(**lifecycle_kwargs)
-        self.chat = ChatService(self.lifecycle)
+        self.chat = ChatService(self.lifecycle, retriever=Retriever(get_data) if get_data else None)
         self._stop = threading.Event()
         self._watcher: threading.Thread | None = None
 

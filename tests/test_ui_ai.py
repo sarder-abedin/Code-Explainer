@@ -36,6 +36,9 @@ def ai(tmp_path, monkeypatch, browser):
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "a.py").write_text("x = 1\n\ndef hello():\n    return x\n")
+    for pkg in ("pkg1", "pkg2"):
+        (proj / pkg).mkdir()
+        (proj / pkg / "util.py").write_text("def helper():\n    return 1\n")
     holder = SimpleNamespace(route=ndjson_route(ollama_tokens("Hello ", "world")), tags=OLLAMA_TAGS, load_error=False)
 
     def chat(handler, body):
@@ -441,6 +444,15 @@ def test_idle_time_is_shown_while_running(ai):
     assert "idle" in ai.page.inner_text("#ai-status").lower()
 
 
+def test_code_inside_bold_renders_as_code_not_as_backticks(ai):
+    ai.holder.route = ndjson_route(ollama_tokens("**The `main` function** is the front door."))
+    ready_ai(ai)
+    ask(ai, "q")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    assert ai.page.locator(".ai-msg.assistant strong code").all_inner_texts() == ["main"]
+    assert "`" not in ai.page.inner_text(".ai-msg.assistant .ai-text")
+
+
 def test_bold_and_code_render_but_other_markup_stays_text(ai):
     ai.holder.route = ndjson_route(ollama_tokens("The **front door** opens `main` and <b>not this</b>. A * lone star and **unclosed"))
     ready_ai(ai)
@@ -450,3 +462,89 @@ def test_bold_and_code_render_but_other_markup_stays_text(ai):
     assert ai.page.locator(".ai-msg.assistant code").all_inner_texts() == ["main"]
     text = ai.page.inner_text(".ai-msg.assistant .ai-text")
     assert "<b>not this</b>" in text and "A * lone star and **unclosed" in text and ai.page.locator(".ai-msg.assistant b").count() == 0
+
+
+# ======================================================================= step 4: grounding in the UI
+def last_system(ai):
+    return [r["body"] for r in ai.fake.requests if r["path"] == "/api/chat" and r["body"]["messages"]][-1]["messages"][0]["content"]
+
+
+def test_answers_list_the_code_they_were_based_on_and_chips_open_it(ai):
+    ready_ai(ai)
+    ask(ai, "what does hello return")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    chips = ai.page.locator(".ai-msg.assistant .ai-source")
+    assert chips.count() >= 1
+    first = chips.first
+    assert "a.py" in first.inner_text() and ":3-4" in first.inner_text() and "hello" in first.inner_text()
+    assert first.get_attribute("title")                                                   # says why it was chosen
+    first.click()
+    ai.page.wait_for_selector("#detail:not([hidden])")
+    assert "f=a.py" in ai.page.evaluate("location.hash") and "line=3" in ai.page.evaluate("location.hash")
+    assert "a.py" in ai.page.inner_text("#detail .t")
+
+
+def test_citations_in_the_answer_link_to_real_code_and_flag_made_up_ones(ai):
+    ai.holder.route = ndjson_route(ollama_tokens(
+        "See `a.py:3` and a.py:1-2, plus nope.py:9, a.py:999, util.py:1 and `x.txt:1`, but not e.g.:5 or v1.2:3."))
+    ready_ai(ai)
+    ask(ai, "q")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    good = ai.page.locator(".ai-msg.assistant a.ai-cite")
+    assert good.all_inner_texts() == ["a.py:3", "a.py:1-2"]
+    bad = ai.page.locator(".ai-msg.assistant span.ai-cite.bad")
+    assert bad.all_inner_texts() == ["nope.py:9", "a.py:999", "util.py:1", "x.txt:1"]
+    assert "not found" in (bad.first.get_attribute("title") or "").lower()
+    assert "ambiguous" in (bad.nth(2).get_attribute("title") or "").lower()                # two util.py files exist
+    plain = ai.page.inner_text(".ai-msg.assistant .ai-text")
+    assert "e.g.:5" in plain and "v1.2:3" in plain
+    good.first.click()
+    ai.page.wait_for_selector("#detail:not([hidden])")
+    assert "f=a.py" in ai.page.evaluate("location.hash") and "line=3" in ai.page.evaluate("location.hash")
+
+
+def test_the_search_the_project_switch_is_on_by_default_and_respected(ai):
+    ready_ai(ai)
+    assert ai.page.is_checked("#ai-ground")
+    ai.page.uncheck("#ai-ground")
+    ask(ai, "what does hello return")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    assert ai.page.locator(".ai-source").count() == 0 and "def hello" not in last_system(ai)
+    ai.page.check("#ai-ground")
+    ask(ai, "what does hello return")
+    ai.page.wait_for_function("document.querySelectorAll('.ai-msg.assistant .ai-stats').length === 2")
+    assert "def hello" in last_system(ai) and ai.page.locator(".ai-msg.assistant").nth(1).locator(".ai-source").count() >= 1
+
+
+def test_when_nothing_matches_the_user_is_told_the_answer_may_be_a_guess(ai):
+    ready_ai(ai)
+    ask(ai, "airspeed of an unladen swallow")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    note = ai.page.inner_text(".ai-retrieval").lower()
+    assert "no matching code" in note and "guess" in note
+    assert ai.page.locator(".ai-source").count() == 0
+    assert "No repository code matched" in last_system(ai)
+
+
+def test_what_was_sent_includes_the_sources_and_search_details(ai):
+    ready_ai(ai)
+    ask(ai, "what does hello return")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    ai.page.click("button.ai-show-sent")
+    sent = ai.page.inner_text("pre.ai-sent-body")
+    assert '"sources"' in sent and '"retrieval"' in sent and "a.py" in sent and '"matched"' in sent
+
+
+def test_source_chips_and_citations_never_render_hostile_paths_as_html(ai):
+    evil = 'x<img src=1 onerror="window.__pwned=7">.py'
+    (ai.proj / evil).write_text('def sneaky():\n    """Do the sneaky thing."""\n    return 1\n')
+    ai.session.refresh()
+    ai.holder.route = ndjson_route(ollama_tokens(f"See {evil}:1 and `<script>window.__pwned=8</script>.py:2`."))
+    ready_ai(ai)
+    ask(ai, "do the sneaky thing")
+    ai.page.wait_for_selector(".ai-msg.assistant .ai-stats")
+    ai.page.wait_for_timeout(300)
+    assert ai.page.evaluate("window.__pwned") is None
+    assert ai.page.locator(".ai-msg img, .ai-msg script, .ai-source img").count() == 0
+    chip = ai.page.locator(".ai-source", has_text="sneaky")
+    assert chip.count() >= 1 and "<img" in chip.first.inner_text()                      # the hostile name is shown as plain text

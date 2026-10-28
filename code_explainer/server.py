@@ -78,8 +78,12 @@ class Session:
         self.progress_path = state_dir() / repo_id(root) / "progress.json"
         self._sig = ""
         self.data: dict = {}
-        self.ai = AIRuntime()
+        self.ai = AIRuntime(get_data=self._versioned_data)
         self.refresh()
+
+    def _versioned_data(self) -> tuple[int, dict]:
+        with self.lock:
+            return self.version, self.data
 
     def refresh(self) -> None:
         sig = signature(self.root)
