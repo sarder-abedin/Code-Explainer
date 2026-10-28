@@ -14,7 +14,8 @@ code-explainer serve path/to/repo --open                       # live: updates a
 code-explainer analyze path/to/repo --ai                       # also have a local model explain the key files
 ```
 
-What you get, tab by tab: **Story** (a guided tour), **Changes** (review of a diff), **Overview**, **Flow**,
+What you get, tab by tab: **Story** (a guided tour), **Changes** (review of a diff), **Map** (the architecture),
+**Overview**, **Flow**,
 **Treemap**, **Dependencies**, **Health** (which tests reach the code, and a safety check), **AI** (local model, `serve`
 only) and **Words** (a glossary).
 
@@ -48,6 +49,14 @@ tools, calling is asking a helper for a favour.
 - **Treemap:** area is lines of code. Colour by language, complexity, churn, popularity,
   "possibly unused", what you understand, or what changed.
 - **Dependencies:** module graph where folders collapse and expand.
+- **Map:** the architecture on one page. The parts of the project are boxes (found from its folders, or from which
+  files import each other in a flat project), arrows show which part uses which with the number of imports and calls
+  behind them, and dashed boxes are the outside systems it talks to (a database, the web, other programs, a message
+  queue, an AI service...), recognised from the libraries it imports. Parts that need each other (an import circle) are
+  drawn in red. Click a part to read what it does, who it uses and who uses it, how much of it tests reach, and its
+  safety findings; click an arrow to see the exact imports behind it. Colour the parts by test coverage or safety
+  findings, **Copy as Mermaid** for a README or pull request, or **Download SVG**. Every file panel has a link back to
+  its part, and from a part you reach its files and then their flowcharts: system, part, file, function.
 - **Flowcharts:** every function that makes a choice has a "▦ Flowchart" button in the file panel (and on Flow
   steps). It draws the function step by step: choices as diamonds, loops, `try`/`except` paths, early returns and
   errors. The boxes are worded for the reading level you picked (the technical level shows the exact code) and
@@ -177,6 +186,10 @@ Flowcharts show the shape of a function's code, not what it does at run time: a 
 (and says so), a `switch` case that runs on into the next one is drawn as leaving the switch, and a `finally` block is
 drawn once, not on every path. The charts of the least complex functions are left out if a report would get very large.
 
+The Map is a best guess too: parts come from the folder layout (a project with a single folder is shown one box per
+file, or clustered by imports when it is big), outside systems from a fixed list of well-known libraries, and arrows
+from imports and followed calls only, so wiring done at run time does not show. Empty `__init__.py` files are left out.
+
 The Health tab is an estimate too: "no test seen" means no test was seen reaching a function through the call graph, not
 that coverage was measured, and a safety finding is a place to look, not proof of a bug.
 
@@ -193,10 +206,10 @@ pytest
 ```
 
 Where things live: `code_explainer/analysis/` (per-language parsers), `flowgraph.py` / `flowgraph_js.py` /
-`flowlayout.py` (function flowcharts), `calls.py` / `resolve.py` (call graph and
+`flowlayout.py` (function flowcharts), `architecture.py` / `graphs.py` (the Map tab), `calls.py` / `resolve.py` (call graph and
 imports), `explain.py` (the plain-language layer), `diff.py` (change review), `testmap.py` and `hygiene*.py` (the
 Health tab), `server.py` (serve mode), `ai/` (providers, lifecycle, retrieval, explain tasks, batch), and `web/`
-(the single-file app: `app.js` with `ai.js`, `health.js` and `chart.js` spliced in by `report.py`). The AI tests run against
+(the single-file app: `app.js` with `ai.js`, `health.js`, `chart.js` and `arch.js` spliced in by `report.py`). The AI tests run against
 fake Ollama and LM Studio servers (`tests/ai_fakes.py`, `tests/fake_backends.py`), so they need no model.
 
 Work test-first: run the whole suite before you change anything (so you know the baseline is

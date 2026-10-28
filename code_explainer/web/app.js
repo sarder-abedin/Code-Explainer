@@ -51,13 +51,14 @@ const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); co
 // `code` spans in generated text become <code> elements.
 const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
 const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
-  chart: "", flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
+  chart: "", comp: "", flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (p.get("tab")) state.tab = p.get("tab");
   state.chart = p.get("chart") || "";
+  state.comp = p.get("comp") || "";
   if (p.get("step")) state.storyStep = Math.max(0, +p.get("step") || 0);
   const f = p.get("f");
   state.selected = f && BY.has(f) ? f : null;
@@ -70,6 +71,7 @@ function writeHash() {
   if (state.selected) p.set("f", state.selected);
   if (state.line) p.set("line", state.line);
   if (state.chart) p.set("chart", state.chart);
+  if (state.comp && state.tab === "map") p.set("comp", state.comp);
   if (state.tab === "flow" && state.flowRoot) p.set("root", state.flowRoot);
   if (state.tab === "story") p.set("step", state.storyStep);
   history.replaceState(null, "", "#" + p);
@@ -95,7 +97,7 @@ function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ story: renderStory, changes: renderChanges, ai: typeof renderAI === "function" ? renderAI : renderOverview, health: renderHealth, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ story: renderStory, changes: renderChanges, ai: typeof renderAI === "function" ? renderAI : renderOverview, health: renderHealth, map: renderArch, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
@@ -641,6 +643,7 @@ function renderDetail() {
       h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null),
     h("div", { class: "dbody" },
       progressControls(f),
+      archLink(f),
       (ex => (ex ? h("div", { class: "dsec" }, ex) : null))(aixControls({ kind: "file", path: f.path })),
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
@@ -800,6 +803,7 @@ function startLive() {
 // @@AI@@
 // @@HEALTH@@
 // @@CHART@@
+// @@ARCH@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));
