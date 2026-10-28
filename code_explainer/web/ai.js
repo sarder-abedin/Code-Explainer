@@ -648,7 +648,7 @@ function aixControls(target, compact) {
 
 // A static report cannot talk to a model, but `analyze --ai` can write explanations into it ahead of time.
 // They are shown read-only, and always labelled as AI-written.
-const AIX_LEVELS = { kid: "child-friendly", plain: "plain-English", tech: "technical" };
+const AIX_LEVELS = { kid: "beginner-friendly", plain: "plain-English", tech: "technical" };
 function aixBaked(target) {
   const b = D.aiExplain, item = b && b.items && b.items[target.kind + "|" + target.path];
   if (!item) return null;
