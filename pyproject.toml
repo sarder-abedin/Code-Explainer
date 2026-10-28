@@ -9,7 +9,10 @@ description = "Turn any code repository into an interactive map you can actually
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-dependencies = []
+dependencies = [
+  # tomllib is in the standard library from Python 3.11
+  "tomli>=1.1; python_version < '3.11'",
+]
 
 [project.optional-dependencies]
 treesitter = [

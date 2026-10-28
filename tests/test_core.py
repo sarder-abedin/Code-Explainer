@@ -143,3 +143,24 @@ def test_empty_repository(tmp_path):
     d = analyze_repo(tmp_path)
     assert d["repo"]["files"] == 0 and d["files"] == [] and d["flowRoots"] == []
     assert d["explain"]["story"][0]["title"]["plain"] == "Overview"
+
+
+def test_pyproject_scripts_work_without_tomllib(tmp_path):
+    """Python 3.10 has no tomllib; console scripts must still be found through the tomli backport."""
+    import subprocess
+    import sys
+    pytest = __import__("pytest")
+    pytest.importorskip("tomli")
+    (tmp_path / "pyproject.toml").write_text("[project.scripts]\nrun = 'svc.app:start'\n")
+    (tmp_path / "svc").mkdir()
+    (tmp_path / "svc/app.py").write_text("def start():\n    pass\n")
+    code = (
+        "import sys; sys.modules['tomllib'] = None\n"  # `import tomllib` now raises ImportError, as on 3.10
+        "from code_explainer.core import analyze_repo\n"
+        f"d = analyze_repo({str(tmp_path)!r})\n"
+        "f = {x['path']: x for x in d['files']}\n"
+        "print(f['svc/app.py']['entry'])\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "console script `run`" in out.stdout
