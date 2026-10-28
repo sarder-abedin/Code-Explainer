@@ -33,7 +33,10 @@ const langs = Object.entries(D.repo.languages).sort((a, b) => b[1].loc - a[1].lo
 const LANG_COLOR = Object.fromEntries(langs.map(([n], i) => [n, PALETTE[i % PALETTE.length]]));
 const maxOf = k => Math.max(1, ...FILES.map(f => k(f)));
 
-const state = { tab: "overview", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set() };
+const SYMS = new Map();
+for (const f of FILES) for (const sym of f.symbols) SYMS.set(`${f.path}::${sym.qual}`, { sym, file: f });
+const state = { tab: "overview", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+  flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
 function readHash() {
@@ -42,12 +45,14 @@ function readHash() {
   const f = p.get("f");
   state.selected = f && BY.has(f) ? f : null;
   if (p.get("line")) state.line = +p.get("line"); else state.line = 0;
+  if (p.get("root") && SYMS.has(p.get("root"))) state.flowRoot = p.get("root");
 }
 function writeHash() {
   const p = new URLSearchParams();
   p.set("tab", state.tab);
   if (state.selected) p.set("f", state.selected);
   if (state.line) p.set("line", state.line);
+  if (state.tab === "flow" && state.flowRoot) p.set("root", state.flowRoot);
   history.replaceState(null, "", "#" + p);
 }
 function openFile(path, line) {
@@ -67,7 +72,7 @@ function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ overview: renderOverview, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
@@ -379,6 +384,90 @@ function renderGraph(view) {
   });
   apply(); place(); view.append(svg, h("div", { class: "hint" }, "Scroll to zoom, drag the background to pan, drag a node to move it. Hover to highlight a node's neighbours."));
   markSelected();
+}
+
+// ---------- flow explorer ----------
+function symLabel(sym) { return sym.kind === "module" ? "(file's own top-level code)" : sym.qual + (sym.kind === "class" ? "" : "()"); }
+function buildFlow(rootId) {
+  const rows = [], seen = new Set();
+  (function walk(id, depth, via, conf, parentKey, stack) {
+    const hit = SYMS.get(id); if (!hit) return;
+    const key = parentKey + ">" + id;
+    const repeat = seen.has(id), cyc = stack.includes(id);
+    const kids = (hit.sym.callees || []).filter(c => SYMS.has(c.id) && (state.flowGuess || c.conf === "certain"));
+    const row = { key, id, depth, sym: hit.sym, file: hit.file, via, conf, repeat, cyc, nKids: kids.length, cut: false };
+    rows.push(row); seen.add(id);
+    if (repeat || cyc) return;
+    if (depth >= state.flowDepth) { row.cut = kids.length > 0; return; }
+    for (const c of kids) walk(c.id, depth + 1, c.line, c.conf, key, stack.concat(id));
+  })(rootId, 0, 0, "certain", "", []);
+  return rows;
+}
+function visibleFlow(rows) {
+  const out = []; let hideBelow = Infinity;
+  for (const r of rows) {
+    if (r.depth > hideBelow) continue;
+    hideBelow = Infinity; out.push(r);
+    if (state.flowOpen.has("c:" + r.key)) hideBelow = r.depth;
+  }
+  return out;
+}
+function renderFlow(view) {
+  const roots = D.flowRoots;
+  if (!roots.length) {
+    view.append(h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "No starting points found"),
+      h("p", {}, "This tab follows what runs, step by step, from a starting point such as a command, a web route, or a script's `main()`. None were found with call information."),
+      FILES.some(f => (f.lang === "JavaScript" || f.lang === "TypeScript") && !f.hasCalls)
+        ? h("p", {}, "JavaScript/TypeScript call tracing needs tree-sitter: ", h("code", {}, "pip install 'code-explainer[treesitter]'"), ".") : null));
+    return;
+  }
+  if (!SYMS.has(state.flowRoot)) state.flowRoot = roots[0].id;
+  const rows = buildFlow(state.flowRoot), vis = visibleFlow(rows);
+  if (state.flowStep >= vis.length) state.flowStep = vis.length - 1;
+  const sel = h("select", { "aria-label": "Starting point", onchange: e => { state.flowRoot = e.target.value; state.flowOpen.clear(); state.flowStep = -1; writeHash(); renderAll(); } },
+    roots.map(r => h("option", { value: r.id, selected: r.id === state.flowRoot }, `${r.name}  —  ${r.why}`)));
+  const depth = h("select", { "aria-label": "Depth", onchange: e => { state.flowDepth = +e.target.value; state.flowStep = -1; renderAll(); } },
+    [2, 3, 4, 5, 6, 8].map(n => h("option", { value: n, selected: n === state.flowDepth }, `${n} levels`)));
+  const guess = h("label", {}, h("input", { type: "checkbox", checked: state.flowGuess, onchange: e => { state.flowGuess = e.target.checked; state.flowStep = -1; renderAll(); } }), " show guesses");
+  const go = d => { state.flowStep = Math.max(0, Math.min(vis.length - 1, (state.flowStep < 0 ? (d > 0 ? 0 : 0) : state.flowStep + d))); renderAll(); };
+  const nav = h("span", { class: "nav" },
+    h("button", { onclick: () => go(-1), disabled: state.flowStep <= 0 }, "◀ Back"),
+    h("button", { onclick: () => go(1), disabled: state.flowStep >= vis.length - 1 }, state.flowStep < 0 ? "▶ Step through" : "Next ▶"),
+    state.flowStep >= 0 ? h("span", {}, ` step ${state.flowStep + 1} of ${vis.length}`) : null);
+  view.append(h("div", { class: "toolbar" }, h("label", {}, "Start from ", sel), depth, guess, nav));
+  view.append(h("p", { class: "hint", style: "margin-top:0" },
+    "Read top to bottom: each line is a function that the line above calls, in the order the calls appear in the code. Indented lines run inside their parent. ",
+    h("span", { class: "badge warn" }, "guess"), " means the link is inferred from the name only."));
+  if (state.flowStep >= 0) view.append(stepCard(vis[state.flowStep], vis));
+  const list = h("div", { class: "flow", role: "tree" });
+  vis.forEach((r, i) => {
+    const open = !state.flowOpen.has("c:" + r.key);
+    const toggle = r.nKids && !r.repeat && !r.cyc && !r.cut
+      ? h("button", { class: "tg", "aria-label": open ? "Collapse" : "Expand", onclick: e => { e.stopPropagation(); const k = "c:" + r.key; state.flowOpen.has(k) ? state.flowOpen.delete(k) : state.flowOpen.add(k); renderAll(); } }, open ? "▾" : "▸")
+      : h("span", { class: "tg" }, "");
+    list.append(h("div", { class: "frow" + (i === state.flowStep ? " cur" : ""), role: "treeitem", style: `padding-left:${8 + r.depth * 22}px`, tabindex: 0,
+      onclick: () => { state.flowStep = i; openFile(r.file.path, r.sym.line); renderAll(); } },
+      toggle, h("span", { class: "n" }, String(i + 1)),
+      h("span", { class: "nm" }, symLabel(r.sym)),
+      r.conf === "inferred" ? h("span", { class: "badge warn", title: "Linked by name only; may be wrong" }, "guess") : null,
+      r.repeat ? h("span", { class: "badge" }, "↻ shown above") : null,
+      r.cyc ? h("span", { class: "badge" }, "↺ calls itself") : null,
+      r.cut ? h("span", { class: "badge" }, `+${r.nKids} deeper`) : null,
+      r.sym.doc ? h("span", { class: "d" }, r.sym.doc) : null,
+      h("span", { class: "loc" }, `${base(r.file.path)}:${r.sym.line}`)));
+  });
+  view.append(list);
+  const roots0 = SYMS.get(state.flowRoot);
+  if (roots0 && !rows[0].nKids) view.append(h("p", { class: "hint" }, "This starting point doesn't call anything else inside the repository."));
+}
+function stepCard(r, vis) {
+  const src = r.file.source ? r.file.source.split("\n").slice(r.sym.line - 1, Math.min(r.sym.end_line, r.sym.line + 29)) : [];
+  const parent = vis.slice(0, vis.indexOf(r)).reverse().find(x => x.depth === r.depth - 1);
+  return h("div", { class: "card step" },
+    h("div", { class: "t" }, "Now running: ", h("b", {}, symLabel(r.sym)), h("span", { class: "loc" }, ` ${r.file.path}:${r.sym.line}`)),
+    parent ? h("div", { class: "hint" }, `Called by ${symLabel(parent.sym)} at line ${r.via}.`) : h("div", { class: "hint" }, "This is where it starts."),
+    r.sym.doc ? h("div", {}, r.sym.doc) : null,
+    src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null);
 }
 
 // ---------- detail panel ----------

@@ -10,13 +10,16 @@ _DECISIONS = (
     ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler, ast.IfExp,
     ast.comprehension,
 )
+# Decorator names that mean "the framework calls this for you".
+_ROUTE_ATTRS = {"route", "get", "post", "put", "delete", "patch", "websocket", "head", "options"}
+_COMMAND_ATTRS = {"command", "group", "task", "callback", "on_event", "listener", "receiver", "shared_task"}
+_FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def _first_line(doc: str | None) -> str:
     if not doc:
         return ""
-    line = doc.strip().splitlines()[0].strip()
-    return line[:160]
+    return doc.strip().splitlines()[0].strip()[:160]
 
 
 def complexity(node: ast.AST) -> int:
@@ -41,17 +44,70 @@ def _is_main_guard(node: ast.stmt) -> bool:
     return has_name and has_main
 
 
+def _chain(node: ast.AST) -> list[str]:
+    """Dotted callee as a list of names. Unknown receivers become '?'."""
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, ast.Attribute):
+        return _chain(node.value) + [node.attr]
+    if isinstance(node, ast.Call):
+        return ["?"]
+    return ["?"]
+
+
+def _calls_in(nodes: list[ast.AST], skip_defs: bool) -> list[tuple[list[str], int]]:
+    """Call sites under `nodes`. With skip_defs, function bodies are not entered
+    (their calls belong to the function), but decorators and defaults are."""
+    out: list[tuple[list[str], int]] = []
+    stack = list(nodes)
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.Call):
+            chain = _chain(n.func)
+            if chain != ["?"]:
+                out.append((chain, n.lineno))
+        if skip_defs and isinstance(n, _FUNCS):
+            stack.extend(n.decorator_list)
+            stack.extend(n.args.defaults + [d for d in n.args.kw_defaults if d])
+            continue
+        stack.extend(ast.iter_child_nodes(n))
+    out.sort(key=lambda c: c[1])
+    seen, dedup = set(), []
+    for chain, line in out:
+        key = (tuple(chain), line)
+        if key not in seen:
+            seen.add(key)
+            dedup.append((chain, line))
+    return dedup
+
+
+def _entry_from_decorators(node: ast.AST) -> str:
+    for d in getattr(node, "decorator_list", []):
+        target = d.func if isinstance(d, ast.Call) else d
+        if isinstance(target, ast.Attribute):
+            if target.attr in _ROUTE_ATTRS and isinstance(d, ast.Call):
+                return f"HTTP route (@{ast.unparse(target)})"
+            if target.attr in _COMMAND_ATTRS:
+                return f"registered handler (@{ast.unparse(target)})"
+        elif isinstance(target, ast.Name) and target.id in _COMMAND_ATTRS:
+            return f"registered handler (@{target.id})"
+    return ""
+
+
 def _collect(body: list[ast.stmt], parent: str | None, out: list[Symbol]) -> None:
     for node in body:
         if isinstance(node, ast.ClassDef):
-            qual = f"{parent}.{node.name}" if parent else node.name
-            out.append(Symbol(node.name, "class", node.lineno, node.end_lineno or node.lineno,
-                              _first_line(ast.get_docstring(node)), complexity(node), parent))
-            _collect(node.body, qual, out)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            sym = Symbol(node.name, "class", node.lineno, node.end_lineno or node.lineno,
+                         _first_line(ast.get_docstring(node)), complexity(node), parent)
+            out.append(sym)
+            _collect(node.body, sym.qual, out)
+        elif isinstance(node, _FUNCS):
             kind = "method" if parent else "function"
-            out.append(Symbol(node.name, kind, node.lineno, node.end_lineno or node.lineno,
-                              _first_line(ast.get_docstring(node)), complexity(node), parent))
+            sym = Symbol(node.name, kind, node.lineno, node.end_lineno or node.lineno,
+                         _first_line(ast.get_docstring(node)), complexity(node), parent)
+            sym.raw_calls = _calls_in(node.body, skip_defs=False)
+            sym.entry = _entry_from_decorators(node)
+            out.append(sym)
 
 
 def analyze(info: FileInfo, source: str) -> None:
@@ -61,15 +117,34 @@ def analyze(info: FileInfo, source: str) -> None:
         info.parse_error = str(e)
         return
     info.analyzed = True
+    info.analyzer = "ast"
+    info.has_calls = True
     info.doc = _first_line(ast.get_docstring(tree))
     info.complexity = complexity(tree)
     _collect(tree.body, None, info.symbols)
-    # Imports anywhere in the file, including function-local ones.
+
+    # Top-level code (including the `__main__` guard and decorators) acts as a
+    # pseudo-symbol so scripts have something to start a flow from.
+    top = _calls_in(tree.body, skip_defs=True)
+    if top:
+        mod = Symbol("<module>", "module", 1, len(source.splitlines()) or 1, info.doc, 1, None, qual="<module>")
+        mod.raw_calls = top
+        info.symbols.insert(0, mod)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 info.raw_imports.append((0, alias.name, []))
+                if alias.asname:
+                    info.bindings[alias.asname] = (0, alias.name, None)
+                else:
+                    top_name = alias.name.split(".")[0]
+                    info.bindings.setdefault(top_name, (0, top_name, None))
         elif isinstance(node, ast.ImportFrom):
-            info.raw_imports.append((node.level, node.module or "", [a.name for a in node.names]))
+            names = [a.name for a in node.names]
+            info.raw_imports.append((node.level, node.module or "", names))
+            for a in node.names:
+                if a.name != "*":
+                    info.bindings[a.asname or a.name] = (node.level, node.module or "", a.name)
     if any(_is_main_guard(n) for n in tree.body):
         info.entry_reasons.append("has an `if __name__ == \"__main__\"` block")

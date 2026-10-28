@@ -33,7 +33,7 @@ magic can make a used file look "possibly unused", so treat that as a place to l
 ## Roadmap
 
 1. Architecture map (this release)
-2. JS/TS depth and call-graph flow tracing from entry points
+2. JS/TS depth (tree-sitter, optional extra) and call-graph flow tracing from entry points (done)
 3. Review of agent changes: diff mode, blast radius, new dead code
 4. `serve` mode with live reload, notes and an "understood" tracker
 

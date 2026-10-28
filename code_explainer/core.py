@@ -12,7 +12,8 @@ from . import __version__
 from .analysis import CODE_LANGS, analyze_file, detect_language
 from .ingest import git_churn, git_summary, list_files
 from .model import FileInfo
-from .resolve import resolve_imports
+from .calls import resolve_calls, sym_id
+from .resolve import py_index, resolve_imports
 
 try:
     import tomllib
@@ -53,6 +54,10 @@ def _declared_entry_points(root: Path, files: dict[str, FileInfo]) -> None:
                     break
             if hit:
                 files[hit].entry_reasons.append(f"console script `{cmd}` (pyproject.toml)")
+                attr = str(target).split(":")[1].strip() if ":" in str(target) else ""
+                for sym in files[hit].symbols:
+                    if attr and sym.qual == attr and not sym.entry:
+                        sym.entry = f"console script `{cmd}`"
     pkg = root / "package.json"
     if pkg.is_file():
         try:
@@ -125,6 +130,37 @@ def _reading_order(files: dict[str, FileInfo], limit: int = 25) -> list[dict]:
     return order
 
 
+_ROOT_FUNCS = {"main", "run", "cli", "handler", "start", "serve"}
+
+
+def _flow_roots(files: dict[str, FileInfo]) -> list[dict]:
+    """Places where execution can start: commands, routes, scripts, main()."""
+    roots: dict[str, dict] = {}
+    rank = {"console": 0, "route": 1, "handler": 2, "script": 3, "main": 4}
+
+    def add(path: str, sym, why: str, kind: str) -> None:
+        sid = sym_id(path, sym)
+        if sid not in roots or rank[kind] < rank[roots[sid]["kind"]]:
+            roots[sid] = {"id": sid, "path": path, "name": sym.qual if sym.qual != "<module>" else base_name(path),
+                          "why": why, "kind": kind}
+
+    def base_name(p: str) -> str:
+        return posixpath.basename(p)
+
+    for path, info in files.items():
+        if info.is_test or not info.has_calls:
+            continue
+        for sym in info.symbols:
+            if sym.entry:
+                kind = "console" if sym.entry.startswith("console") else "route" if "route" in sym.entry else "handler"
+                add(path, sym, sym.entry, kind)
+            elif info.entry_reasons and sym.kind == "module" and sym.callees:
+                add(path, sym, info.entry_reasons[0], "script")
+            elif info.entry_reasons and sym.kind == "function" and sym.name in _ROOT_FUNCS and sym.callees:
+                add(path, sym, f"`{sym.name}()` in an entry file", "main")
+    return sorted(roots.values(), key=lambda r: (rank[r["kind"]], r["path"], r["name"]))
+
+
 def analyze_repo(root: Path, name: str | None = None) -> dict:
     root = Path(root)
     files: dict[str, FileInfo] = {}
@@ -150,6 +186,7 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
                 files[p].churn = n
 
     resolve_imports(files)
+    call_stats = resolve_calls(files, py_index(set(files)))
     _declared_entry_points(root, files)
     _mark_entries_and_tests(files)
     _mark_unused(files)
@@ -173,4 +210,6 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
         "files": [files[p].to_dict() for p in sorted(files)],
         "edges": edges,
         "readingOrder": _reading_order(files),
+        "flowRoots": _flow_roots(files),
+        "callStats": call_stats,
     }

@@ -14,6 +14,23 @@ class Symbol:
     doc: str = ""
     complexity: int = 1
     parent: str | None = None
+    qual: str = ""  # "Class.method" or "name"; "<module>" for top-level code
+    entry: str = ""  # why this symbol starts a flow (route, CLI command, ...)
+    # Raw call sites before resolution: ([name, attr, ...], line)
+    raw_calls: list = field(default_factory=list)
+    # Resolved: [{"id": "path::qual", "conf": "certain"|"inferred", "line": int}]
+    callees: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.qual:
+            self.qual = f"{self.parent}.{self.name}" if self.parent else self.name
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name, "kind": self.kind, "line": self.line, "end_line": self.end_line,
+            "doc": self.doc, "complexity": self.complexity, "parent": self.parent,
+            "qual": self.qual, "entry": self.entry, "callees": self.callees,
+        }
 
 
 @dataclass
@@ -35,6 +52,11 @@ class FileInfo:
     is_test: bool = False
     possibly_unused: bool = False
     analyzed: bool = False  # True when a real parser (not just line counting) ran
+    analyzer: str = ""  # "ast" | "tree-sitter" | "regex" | ""
+    has_calls: bool = False  # True when call sites were extracted
+    # local name -> binding tuple (python: (level, module, attr|None); js: (spec, attr))
+    bindings: dict = field(default_factory=dict)
+    default_export: str = ""
     parse_error: str = ""
     source: str = ""
     truncated: bool = False
@@ -49,13 +71,15 @@ class FileInfo:
             "complexity": self.complexity,
             "churn": self.churn,
             "doc": self.doc,
-            "symbols": [s.__dict__ for s in self.symbols],
+            "symbols": [s.to_dict() for s in self.symbols],
             "imports": self.imports,
             "importedBy": self.imported_by,
             "entry": self.entry_reasons,
             "isTest": self.is_test,
             "unused": self.possibly_unused,
             "analyzed": self.analyzed,
+            "analyzer": self.analyzer,
+            "hasCalls": self.has_calls,
             "parseError": self.parse_error,
             "source": self.source,
             "truncated": self.truncated,
