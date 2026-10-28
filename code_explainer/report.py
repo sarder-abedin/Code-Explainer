@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 WEB = Path(__file__).parent / "web"
+AI_MARKER = "// @@AI@@"
 
 
 def _read(name: str) -> str:
@@ -19,13 +20,21 @@ def _json_for_script(data: dict) -> str:
     return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
+def _script() -> str:
+    """app.js with ai.js spliced in at its marker, so both share one closure in a single-file page."""
+    app, ai = _read("app.js"), _read("ai.js")
+    if app.count(AI_MARKER) != 1:
+        raise RuntimeError("app.js must contain the AI marker exactly once")
+    return app.replace(AI_MARKER, ai)
+
+
 def render_html(data: dict, serve: dict | None = None) -> str:
     html = _read("template.html")
     # Single pass over the placeholders so payload text can never be re-substituted.
     parts = {
         "{{TITLE}}": data["repo"]["name"].replace("<", "&lt;").replace(">", "&gt;"),
         "{{STYLE}}": _read("style.css"),
-        "{{SCRIPT}}": _read("app.js").replace("</script", "<\\/script"),
+        "{{SCRIPT}}": _script().replace("</script", "<\\/script"),
         "{{DATA}}": _json_for_script(data),
         "{{SERVE}}": _json_for_script(serve) if serve else "null",
     }

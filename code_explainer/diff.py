@@ -219,7 +219,6 @@ def compare(root: Path, base_ref: str, head_ref: str | None, base_files: dict[st
     file_importers = {p: i.imported_by for p, i in head_files.items()}
 
     # blast radius: who calls / imports the changed code
-    sym_dist = _bfs(changed_syms, head_rev, 3)
     for path, e in entries.items():
         mine = {s for s in changed_syms if s.startswith(path + "::")}
         dist: dict[str, int] = {}

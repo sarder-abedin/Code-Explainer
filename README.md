@@ -60,6 +60,46 @@ and what to read next. In `serve` mode these are saved in `~/.code-explainer/` (
 repository); in a static report they are saved in the browser. `serve` binds to `127.0.0.1` only,
 because the report contains your source.
 
+## Ask a local AI (optional)
+
+`code-explainer serve` has an **AI** tab that talks to a model running on *your* computer. Nothing is sent to
+the internet, and nothing runs until you press **Start AI Explainer**.
+
+- **Servers:** Ollama, LM Studio, or any OpenAI-compatible server (llama.cpp, Jan, BionicGPT, vLLM...).
+  The tab lists the models you have already downloaded, even if the server is not running yet.
+- **Start and stop for you:** if the server is off, it starts it (`ollama serve` / `lms server start`), loads the
+  model, and unloads and stops *only what it started* when you press Stop, after the idle time you set, or when
+  you quit. A server that was already running, or a model you had loaded yourself, is left alone.
+- **Tune the answers:** presets (Precise, Balanced, Creative), temperature, top-p, top-k, min-p, answer length,
+  context size, repeat penalty, seed, answer length and your own extra instructions. Controls a server cannot use
+  are greyed out with the reason. Answers follow the "Explain" level in the top menu (like I'm 8 / plain / technical).
+- **Grounded in your code, with sources:** before each question the tool searches the whole project (functions,
+  classes, docstrings, docs, and the call and import graphs) and gives the model only the relevant code, numbered by
+  line. The call graph is handed over as exact facts ("`total` is called by `main`"), so the model does not have to
+  guess. Each answer lists the code it was based on ("Based on: ..."), and any `path:line` the model cites becomes a
+  link into the code. A citation that points at a file or line that does not exist is struck through, so an invented
+  one is easy to spot. If nothing matches, the answer says it may be a guess. The open file can be added as focus.
+- **Explain with AI, anywhere:** a "✨ Explain with AI" button on every file, function, flow step and change in a
+  review. The tool builds the prompt itself from its analysis (the numbered code, the exact call-graph facts, the code
+  it calls, who called it, or the patch), so the page can never steer it. The same sources and clickable, verified
+  citations appear under each explanation.
+- **Saved explanations:** a finished explanation is saved on this computer (never in your project, and without your
+  code) and reused instantly next time, **even when the AI is stopped**. It is reused only while the code, the model,
+  every setting and the reading level are unchanged, so nothing stale is ever shown; Regenerate asks again. Answers
+  that were cut off, stopped or failed are never saved. See and clear them under AI > Advanced.
+- **Transparent:** every answer has "Show what was sent": the exact prompt, the settings, and the search details.
+- **Safe by default:** only addresses on this computer are allowed unless you switch on "Allow servers on other
+  computers"; API keys are read from an environment variable you name and are never stored; model output is shown
+  as text (never as HTML); the page can only choose among the servers you configured.
+
+The search is keyword-based, not semantic: it matches the words your question shares with names, docstrings and code
+(it understands `parse_http_response` and "parse the HTTP response" as the same thing, and weighs exact names and the
+open file heavily), but it will miss a question phrased in completely different words from the code ("overflow" vs
+"fit"). Naming the function or file in your question always works.
+
+Models can be wrong. Treat answers as a second opinion beside the deterministic explanations, not as the truth.
+A saved report (`analyze`) cannot talk to a model; use `serve` for that.
+
 ## Languages
 
 | | symbols | imports | call graph |
