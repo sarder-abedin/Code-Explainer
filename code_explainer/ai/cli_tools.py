@@ -41,9 +41,9 @@ def find_binary(name: str) -> str | None:
     return None
 
 
-def _run(binary: str, *args: str) -> str:
+def _run(binary: str, *args: str, timeout: float | None = None) -> str:
     try:
-        out = subprocess.run([binary, *args], capture_output=True, text=True, timeout=CLI_TIMEOUT,
+        out = subprocess.run([binary, *args], capture_output=True, text=True, timeout=timeout or CLI_TIMEOUT,
                              stdin=subprocess.DEVNULL, check=False)
     except subprocess.TimeoutExpired as e:
         raise ProviderError("timeout", f"`{Path(binary).name} {' '.join(args)}` took too long") from e
@@ -97,6 +97,27 @@ def list_lmstudio_cli() -> list[ModelInfo]:
     if not binary:
         raise ProviderError("unsupported", "the `lms` command is not installed")
     return parse_lms_json(_run(binary, "ls", "--json"))
+
+
+def lms_load(model: str, context_length: int | None = None) -> None:
+    """`lms load <model> [--context-length N]`. Flags are the documented ones; `-y` is not relied on."""
+    binary = find_binary("lms")
+    if not binary:
+        raise ProviderError("unsupported", "the `lms` command is not installed")
+    args = ["load", model] + (["--context-length", str(context_length)] if context_length else [])
+    _run(binary, *args, timeout=300.0)
+
+
+def lms_unload(model: str) -> None:
+    binary = find_binary("lms")
+    if binary:
+        _run(binary, "unload", model)
+
+
+def lms_server_stop() -> None:
+    binary = find_binary("lms")
+    if binary:
+        _run(binary, "server", "stop")
 
 
 # ----------------------------------------------------------------- Ollama

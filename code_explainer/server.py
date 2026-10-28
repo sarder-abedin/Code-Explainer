@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .ai import discovery as ai_discovery
+from .ai.http import ProviderError
+from .ai.runtime import AIRuntime
 from .ai import params as ai_params
 from .ai import settings as ai_settings
 from .core import analyze_repo
@@ -76,6 +78,7 @@ class Session:
         self.progress_path = state_dir() / repo_id(root) / "progress.json"
         self._sig = ""
         self.data: dict = {}
+        self.ai = AIRuntime()
         self.refresh()
 
     def refresh(self) -> None:
@@ -115,6 +118,9 @@ class Session:
             json.dump(data, f)
         os.replace(tmp, self.progress_path)
         return data
+
+
+POST_PATHS = {"/api/progress", "/api/ai/settings", "/api/ai/start", "/api/ai/stop", "/api/ai/chat", "/api/ai/cancel"}
 
 
 def make_handler(session: Session, any_host: bool = False):
@@ -161,6 +167,8 @@ def make_handler(session: Session, any_host: bool = False):
                 return self._json(session.load_progress())
             if path == "/api/ai/settings":
                 return self._json({"settings": ai_settings.load(), "schema": ai_params.schema()})
+            if path == "/api/ai/status":
+                return self._json(session.ai.status())
             if path == "/api/ai/providers":
                 st = ai_settings.load()
                 return self._json({"providers": ai_discovery.discover(st), "selected": st["selected"]})
@@ -192,14 +200,54 @@ def make_handler(session: Session, any_host: bool = False):
             if not self._host_ok():
                 return self._json({"error": "bad host"}, 403)
             path = self.path.split("?", 1)[0]
-            if path not in ("/api/progress", "/api/ai/settings"):
+            if path not in POST_PATHS:
                 return self._json({"error": "not found"}, 404)
             ok, raw = self._read_json_post()
             if not ok:
                 return
             if path == "/api/progress":
                 return self._json(session.save_progress(raw))
-            self._json({"settings": ai_settings.update(raw), "schema": ai_params.schema()})
+            if path == "/api/ai/settings":
+                return self._json({"settings": ai_settings.update(raw), "schema": ai_params.schema()})
+            body = raw if isinstance(raw, dict) else {}
+            if path == "/api/ai/start":
+                try:
+                    session.ai.start(str(body.get("provider", "")), str(body.get("endpoint", "")),
+                                     str(body.get("model", "")))
+                except ProviderError as e:
+                    return self._json({"error": str(e), "kind": e.kind}, 400)
+                ai_settings.update({"selected": {"provider": body["provider"], "endpoint": body["endpoint"],
+                                                 "model": body["model"]}})
+                return self._json(session.ai.status())
+            if path == "/api/ai/stop":
+                session.ai.stop()
+                return self._json(session.ai.status())
+            if path == "/api/ai/cancel":
+                return self._json({"cancelled": session.ai.chat.cancel(str(body.get("id", "")))})
+            self._chat(body)
+
+        def _chat(self, body: dict) -> None:
+            """Answer as server-sent events. A closed browser tab cancels the model right away."""
+            cancel = threading.Event()
+            events = session.ai.chat.stream(body, cancel)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            try:
+                for ev in events:
+                    if ev["type"] == "tick":
+                        self.wfile.write(b": ping\n\n")  # keeps the connection honest, so a closed tab is noticed
+                    else:
+                        self.wfile.write(b"data: " + json.dumps(ev, ensure_ascii=False).encode("utf-8") + b"\n\n")
+                    self.wfile.flush()
+            except OSError:  # BrokenPipe / ConnectionReset: the browser went away
+                cancel.set()
+            finally:
+                cancel.set()
+                events.close()
 
     return Handler
 
@@ -212,6 +260,7 @@ def serve(root: Path, name: str, host: str = "127.0.0.1", port: int = 8765, base
     stop = threading.Event()
     if watch:
         threading.Thread(target=session.watch, args=(stop,), daemon=True).start()
+    session.ai.start_watcher()
     if on_ready:
         on_ready(httpd, session)
     try:
@@ -220,4 +269,5 @@ def serve(root: Path, name: str, host: str = "127.0.0.1", port: int = 8765, base
         pass
     finally:
         stop.set()
+        session.ai.shutdown()  # unload and stop only what this session started
         httpd.server_close()

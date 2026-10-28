@@ -57,7 +57,7 @@ LMS_LS_JSON = [
 class FakeServer:
     """routes: {(METHOD, path): body | (status, body) | (status, body, headers) | callable(handler, body)}"""
 
-    def __init__(self, routes):
+    def __init__(self, routes, port=0):
         self.routes, self.requests = routes, []
         fake = self
 
@@ -94,7 +94,7 @@ class FakeServer:
 
             do_GET = do_POST = do_DELETE = _serve
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), H)
         self.url = f"http://127.0.0.1:{self.httpd.server_port}"
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
@@ -137,3 +137,48 @@ def write_ollama_models(root):
     manifest("registry.ollama.ai/someuser/custom/v2", [10, 90])
     manifest("hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF/Q4_K_M", [5, 995])
     return root
+
+
+# ----------------------------------------------------------------- streaming routes
+def _stream(handler, lines, delay=0.0, status=200, ctype="application/x-ndjson", hang_after=None):
+    handler.send_response(status)
+    handler.send_header("Content-Type", ctype)
+    handler.end_headers()
+    try:
+        for i, line in enumerate(lines):
+            if hang_after is not None and i == hang_after:
+                time.sleep(30)
+            handler.wfile.write(line if isinstance(line, bytes) else line.encode())
+            handler.wfile.flush()
+            if delay:
+                time.sleep(delay)
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+def ndjson_route(chunks, delay=0.0, **kw):
+    """chunks: dicts (one JSON per line) or raw str/bytes lines."""
+    lines = [(json.dumps(c) + "\n") if isinstance(c, dict) else c for c in chunks]
+    return lambda handler, body: _stream(handler, lines, delay, **kw)
+
+
+def sse_route(chunks, delay=0.0, **kw):
+    lines = []
+    for c in chunks:
+        lines.append(c if isinstance(c, (str, bytes)) else "data: " + json.dumps(c) + "\n\n")
+    return lambda handler, body: _stream(handler, lines, delay, ctype="text/event-stream", **kw)
+
+
+def ollama_tokens(*texts, done_reason="stop", extra=None):
+    out = [{"model": "m", "message": {"role": "assistant", "content": t}, "done": False} for t in texts]
+    out.append({"model": "m", "message": {"role": "assistant", "content": ""}, "done": True, "done_reason": done_reason,
+                "prompt_eval_count": 12, "eval_count": len(texts), "eval_duration": 500_000_000, **(extra or {})})
+    return out
+
+
+def openai_tokens(*texts, finish="stop"):
+    out = [{"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}]
+    out += [{"choices": [{"index": 0, "delta": {"content": t}}]} for t in texts]
+    out.append({"choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
+    out.append("data: [DONE]\n\n")
+    return out

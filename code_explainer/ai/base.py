@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import threading
 from dataclasses import asdict, dataclass
+from typing import Iterator
 
 from .http import ProviderError, request_json
+from .stream import LineStream
 
 _EMBED_HINTS = ("embed", "bge-", "minilm", "e5-", "gte-")
 
@@ -43,8 +47,9 @@ class Provider:
     label = ""
     default_url = ""
 
-    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 3.0):
+    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 3.0, allow_remote: bool = False):
         self.base_url = base_url.rstrip("/")
+        self.allow_remote = allow_remote
         self.api_key = api_key
         self.timeout = timeout  # per request, so one stuck server cannot stall discovery
 
@@ -54,6 +59,8 @@ class Provider:
     def _get(self, path: str):
         return request_json(self.base_url + path, headers=self._headers(), timeout=self.timeout)
 
+    supports_load = False   # can the tool load/unload a model through this provider's API?
+
     def version(self) -> str:
         return ""
 
@@ -61,6 +68,33 @@ class Provider:
         raise NotImplementedError
 
     def context_length(self, model: str) -> int | None:
+        return None
+
+    def load(self, model: str, options: dict, **kw) -> str | None:
+        """Load a model into memory. Returns an id to pass to unload(), if the provider has one."""
+        return None
+
+    def unload(self, handle: str) -> None:
+        return None
+
+    def stream_chat(self, model: str, messages: list[dict], options: dict, cancel: threading.Event, *,
+                    idle_timeout: float = 120.0, tick_seconds: float = 5.0, **kw) -> Iterator[dict]:
+        """Yield {"type": "token", "text"} / {"type": "thinking"} / {"type": "tick"}, then one
+        {"type": "done", "truncated": bool, "stats": {...}}. Raises ProviderError or Cancelled."""
+        raise NotImplementedError
+
+    def _stream(self, path: str, body: dict, cancel: threading.Event, idle_timeout: float, tick_seconds: float) -> LineStream:
+        return LineStream(self.base_url + path, body, self._headers(), cancel,
+                          idle_timeout=idle_timeout, tick_seconds=tick_seconds, allow_remote=self.allow_remote)
+
+    def _post(self, path: str, body: dict, timeout: float = 30.0):
+        return request_json(self.base_url + path, method="POST", body=body, headers=self._headers(), timeout=timeout)
+
+
+def parse_json_line(line: bytes):
+    try:
+        return json.loads(line.decode("utf-8", "replace"))
+    except ValueError:
         return None
 
 
