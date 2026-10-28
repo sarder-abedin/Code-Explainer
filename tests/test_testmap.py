@@ -1,6 +1,7 @@
 """Which tests reach which code (a static approximation from the call graph)."""
 import pytest
 
+from code_explainer.analysis import javascript_ts
 from code_explainer.core import analyze_repo
 from code_explainer.testmap import annotate_changes
 from conftest import git, write
@@ -36,6 +37,7 @@ class Cart:
     def __repr__(self):
         return "Cart"
 '''
+needs_ts = pytest.mark.skipif(not javascript_ts.AVAILABLE, reason="tree-sitter not installed")
 FILES = {
     "shop/__init__.py": "",
     "shop/lib.py": LIB,
@@ -152,6 +154,7 @@ def test_languages_without_call_data_are_unknown_not_untested(tmp_path):
     assert d["tests"]["summary"]["untested"] == 0
 
 
+@needs_ts
 def test_javascript_tests_reach_code_through_their_callbacks(tmp_path):
     write(tmp_path, {
         "package.json": '{"name": "x"}',
