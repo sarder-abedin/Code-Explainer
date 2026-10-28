@@ -79,6 +79,14 @@ the internet, and nothing runs until you press **Start AI Explainer**.
   guess. Each answer lists the code it was based on ("Based on: ..."), and any `path:line` the model cites becomes a
   link into the code. A citation that points at a file or line that does not exist is struck through, so an invented
   one is easy to spot. If nothing matches, the answer says it may be a guess. The open file can be added as focus.
+- **Explain with AI, anywhere:** a "✨ Explain with AI" button on every file, function, flow step and change in a
+  review. The tool builds the prompt itself from its analysis (the numbered code, the exact call-graph facts, the code
+  it calls, who called it, or the patch), so the page can never steer it. The same sources and clickable, verified
+  citations appear under each explanation.
+- **Saved explanations:** a finished explanation is saved on this computer (never in your project, and without your
+  code) and reused instantly next time, **even when the AI is stopped**. It is reused only while the code, the model,
+  every setting and the reading level are unchanged, so nothing stale is ever shown; Regenerate asks again. Answers
+  that were cut off, stopped or failed are never saved. See and clear them under AI > Advanced.
 - **Transparent:** every answer has "Show what was sent": the exact prompt, the settings, and the search details.
 - **Safe by default:** only addresses on this computer are allowed unless you switch on "Allow servers on other
   computers"; API keys are read from an environment variable you name and are never stored; model output is shown

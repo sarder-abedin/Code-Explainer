@@ -78,7 +78,7 @@ class Session:
         self.progress_path = state_dir() / repo_id(root) / "progress.json"
         self._sig = ""
         self.data: dict = {}
-        self.ai = AIRuntime(get_data=self._versioned_data)
+        self.ai = AIRuntime(get_data=self._versioned_data, cache_dir=state_dir() / "ai-cache" / repo_id(root))
         self.refresh()
 
     def _versioned_data(self) -> tuple[int, dict]:
@@ -124,7 +124,8 @@ class Session:
         return data
 
 
-POST_PATHS = {"/api/progress", "/api/ai/settings", "/api/ai/start", "/api/ai/stop", "/api/ai/chat", "/api/ai/cancel"}
+POST_PATHS = {"/api/progress", "/api/ai/settings", "/api/ai/start", "/api/ai/stop", "/api/ai/chat", "/api/ai/cancel",
+              "/api/ai/explain", "/api/ai/cache/clear"}
 
 
 def make_handler(session: Session, any_host: bool = False):
@@ -173,6 +174,9 @@ def make_handler(session: Session, any_host: bool = False):
                 return self._json({"settings": ai_settings.load(), "schema": ai_params.schema()})
             if path == "/api/ai/status":
                 return self._json(session.ai.status())
+            if path == "/api/ai/cache":
+                cache = session.ai.cache
+                return self._json(cache.stats() if cache else {"entries": 0, "bytes": 0})
             if path == "/api/ai/providers":
                 st = ai_settings.load()
                 return self._json({"providers": ai_discovery.discover(st), "selected": st["selected"]})
@@ -228,12 +232,14 @@ def make_handler(session: Session, any_host: bool = False):
                 return self._json(session.ai.status())
             if path == "/api/ai/cancel":
                 return self._json({"cancelled": session.ai.chat.cancel(str(body.get("id", "")))})
-            self._chat(body)
+            if path == "/api/ai/cache/clear":
+                return self._json({"cleared": session.ai.cache.clear() if session.ai.cache else 0})
+            self._sse(session.ai.chat.explain if path == "/api/ai/explain" else session.ai.chat.stream, body)
 
-        def _chat(self, body: dict) -> None:
+        def _sse(self, make_events, body: dict) -> None:
             """Answer as server-sent events. A closed browser tab cancels the model right away."""
             cancel = threading.Event()
-            events = session.ai.chat.stream(body, cancel)
+            events = make_events(body, cancel)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

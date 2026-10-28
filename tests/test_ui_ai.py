@@ -36,6 +36,7 @@ def ai(tmp_path, monkeypatch, browser):
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "a.py").write_text("x = 1\n\ndef hello():\n    return x\n")
+    (proj / "main.py").write_text("from a import hello\n\n\ndef main():\n    return hello()\n\n\nif __name__ == \"__main__\":\n    main()\n")
     for pkg in ("pkg1", "pkg2"):
         (proj / pkg).mkdir()
         (proj / pkg / "util.py").write_text("def helper():\n    return 1\n")

@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import threading
 
+from pathlib import Path
+
+from .cache import ExplainCache
 from .chat import ChatService
 from .lifecycle import Lifecycle
 from .retrieval import Retriever
 
 
 class AIRuntime:
-    def __init__(self, get_data=None, **lifecycle_kwargs):
-        """`get_data()` returns (version, analysis data); without it answers are not grounded in the repository."""
+    def __init__(self, get_data=None, cache_dir: Path | None = None, **lifecycle_kwargs):
+        """`get_data()` returns (version, analysis data); without it answers are not grounded in the repository
+        and nothing can be explained. `cache_dir` is where saved explanations live (outside the repository)."""
         self.lifecycle = Lifecycle(**lifecycle_kwargs)
-        self.chat = ChatService(self.lifecycle, retriever=Retriever(get_data) if get_data else None)
+        self.cache = ExplainCache(cache_dir) if cache_dir else None
+        self.chat = ChatService(self.lifecycle, retriever=Retriever(get_data) if get_data else None,
+                                get_data=get_data, cache=self.cache)
         self._stop = threading.Event()
         self._watcher: threading.Thread | None = None
 
