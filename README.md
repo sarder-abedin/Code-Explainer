@@ -60,6 +60,27 @@ and what to read next. In `serve` mode these are saved in `~/.code-explainer/` (
 repository); in a static report they are saved in the browser. `serve` binds to `127.0.0.1` only,
 because the report contains your source.
 
+## Ask a local AI (optional)
+
+`code-explainer serve` has an **AI** tab that talks to a model running on *your* computer. Nothing is sent to
+the internet, and nothing runs until you press **Start AI Explainer**.
+
+- **Servers:** Ollama, LM Studio, or any OpenAI-compatible server (llama.cpp, Jan, BionicGPT, vLLM...).
+  The tab lists the models you have already downloaded, even if the server is not running yet.
+- **Start and stop for you:** if the server is off, it starts it (`ollama serve` / `lms server start`), loads the
+  model, and unloads and stops *only what it started* when you press Stop, after the idle time you set, or when
+  you quit. A server that was already running, or a model you had loaded yourself, is left alone.
+- **Tune the answers:** presets (Precise, Balanced, Creative), temperature, top-p, top-k, min-p, answer length,
+  context size, repeat penalty, seed, answer length and your own extra instructions. Controls a server cannot use
+  are greyed out with the reason. Answers follow the "Explain" level in the top menu (like I'm 8 / plain / technical).
+- **Transparent:** every answer has "Show what was sent": the exact prompt and settings.
+- **Safe by default:** only addresses on this computer are allowed unless you switch on "Allow servers on other
+  computers"; API keys are read from an environment variable you name and are never stored; model output is shown
+  as text (never as HTML); the page can only choose among the servers you configured.
+
+Models can be wrong. Treat answers as a second opinion beside the deterministic explanations, not as the truth.
+A saved report (`analyze`) cannot talk to a model; use `serve` for that.
+
 ## Languages
 
 | | symbols | imports | call graph |
