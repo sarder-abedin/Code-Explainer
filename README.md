@@ -53,6 +53,26 @@ blast radius (who depends on the change); which entry points can reach it; lefto
 nothing calls, code that lost its last caller, removals that unchanged code still uses); new
 copy-paste; complexity change; and a suggested reading order, riskiest first and tests last.
 
+## Health: tests and safety
+
+The **Health** tab answers two questions an agent's code leaves open, without running anything.
+
+- **Which tests reach which code?** Starting from every test function it follows the call graph and marks each
+  function as reached directly, reached through other code, reached only by a guess (`obj.method()` resolved from the
+  name), or not seen at all. Each file shows the tests that reach it and the functions that no test was seen reaching;
+  the tab lists the riskiest untested functions (complex, widely used, often changed). In a change review, new or
+  edited functions that no test reaches are called out on the change card and in a summary count.
+  This is a static estimate, not coverage: dynamic calls, fixtures and mocks are invisible to it.
+- **Is anything obviously unsafe?** A pattern check that explains each finding in plain words and says how to fix it:
+  `eval`/`exec`, shell commands built from text, database queries built from strings, unsafe `pickle`/`yaml.load`,
+  switched-off TLS checks, weak hashes, swallowed errors, `innerHTML` and similar in JavaScript, passwords and
+  well-known key formats written into code (shown masked, never in full), committed `.env` files and private keys,
+  files that import each other in a circle, and TODO/FIXME notes. Findings in test files are kept separate and less
+  serious. A finding is a place worth a look, not proof of a bug.
+
+The same facts are given to the local AI when you press Explain, so its explanation can mention that a function has no
+test or that a file has a safety note.
+
 ## Keep track of what you understand
 
 Tick "I understand this file", bookmark files and leave notes. The overview shows a progress bar
@@ -98,7 +118,23 @@ open file heavily), but it will miss a question phrased in completely different 
 "fit"). Naming the function or file in your question always works.
 
 Models can be wrong. Treat answers as a second opinion beside the deterministic explanations, not as the truth.
-A saved report (`analyze`) cannot talk to a model; use `serve` for that.
+A saved report (`analyze`) cannot talk to a model while you read it; use `serve` for that, or write the explanations
+into the report ahead of time:
+
+```
+code-explainer analyze . --ai                         # the model chosen in the AI tab
+code-explainer analyze . --last 3 --ai --ai-limit 6   # explain the changes of the last 3 commits first
+code-explainer analyze . --ai --ai-model qwen2.5-coder:7b --ai-level plain
+```
+
+`--ai` starts your local model, asks it to explain the most important files (entry points first, then what they
+depend on) and, with `--last`/`--base`, the changed files that affect the most other code (up to half of the
+`--ai-limit`, default 10). It then unloads what it started. The answers appear on those files and changes as clearly
+labelled, read-only **AI explanation** sections, with the model and level that wrote them. Progress is printed as it
+goes. Press Ctrl-C at any time to keep what is finished; run the same command again to continue, because finished
+answers are saved and reused (they are shared with `serve`). If the model is missing or off, the report is still
+written, without AI sections, and the exit code is 1. An explanation that was cut off at the length limit is
+reported as failed instead of being embedded half-written.
 
 ## Languages
 

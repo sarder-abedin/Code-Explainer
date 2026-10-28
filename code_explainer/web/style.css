@@ -190,4 +190,18 @@ span.ai-cite.bad{color:var(--warn);text-decoration:line-through dotted;cursor:he
 .aix-note{margin-top:6px;font-size:13px;border-left:3px solid var(--muted);padding-left:8px}
 .aix-note.error{border-color:var(--warn);color:var(--warn)}.aix-note.warn{border-color:#e0a030}
 .ai-cacherow{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.ai-cacherow .hint:last-child{flex-basis:100%}
+.aix-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+.aix-label{font-weight:600}
+.aix-baked{margin:8px 0}
 .aix-text{white-space:pre-wrap;word-break:break-word;line-height:1.55}
+
+/* Health tab */
+.health .warn-card{border-color:var(--warn);margin-bottom:14px}.health .ok-card,.safety .ok-card{border-color:var(--ok)}
+.sevbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.sevchip{border:1px solid var(--line);border-radius:12px;font-size:12px;padding:2px 10px}.sevchip.on{background:var(--panel);font-weight:600}
+.badge.sev-high,.sevchip.sev-high{color:var(--warn);border-color:var(--warn);font-weight:600}
+.badge.sev-medium,.sevchip.sev-medium{color:#c77d00;border-color:#c77d00}
+.finding{display:block!important;cursor:default}.finding .fhead{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.finding .fcode{margin:4px 0;padding:4px 8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.finding .fwhy,.finding .ffix{font-size:13px;margin-top:2px}.finding .ffix{color:var(--muted)}.finding.is-test{opacity:.7}
+.trow{margin:6px 0;font-size:13px}.nt{margin-left:6px}.card.chg .untested{color:var(--warn);margin:4px 0}
