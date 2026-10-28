@@ -10,7 +10,7 @@ import posixpath
 import re
 from collections import defaultdict
 
-from . import hygiene_py
+from . import graphs, hygiene_py
 from .analysis import CODE_LANGS
 from .model import FileInfo
 
@@ -146,50 +146,10 @@ def _js_hits(lines: list[str], text: str):
 
 
 def _cycles(files: dict[str, FileInfo]) -> list[list[str]]:
-    """Groups of non-test files that import each other in a circle (strongly connected components)."""
+    """Groups of non-test files that import each other in a circle."""
     nodes = sorted(p for p, f in files.items() if not f.is_test and f.lang in CODE_LANGS)
     members = set(nodes)
-    adj = {p: [t for t in files[p].imports if t in members and t != p] for p in nodes}
-    index, low, on, stack, out = {}, {}, set(), [], []
-    counter = [0]
-    for root in nodes:
-        if root in index:
-            continue
-        work = [(root, iter(adj[root]))]
-        index[root] = low[root] = counter[0]
-        counter[0] += 1
-        stack.append(root)
-        on.add(root)
-        while work:
-            node, it = work[-1]
-            advanced = False
-            for nxt in it:
-                if nxt not in index:
-                    index[nxt] = low[nxt] = counter[0]
-                    counter[0] += 1
-                    stack.append(nxt)
-                    on.add(nxt)
-                    work.append((nxt, iter(adj[nxt])))
-                    advanced = True
-                    break
-                if nxt in on:
-                    low[node] = min(low[node], index[nxt])
-            if advanced:
-                continue
-            work.pop()
-            if work:
-                low[work[-1][0]] = min(low[work[-1][0]], low[node])
-            if low[node] == index[node]:
-                comp = []
-                while True:
-                    w = stack.pop()
-                    on.discard(w)
-                    comp.append(w)
-                    if w == node:
-                        break
-                if len(comp) > 1:
-                    out.append(sorted(comp))
-    return sorted(out, key=lambda c: (-len(c), c))
+    return graphs.cycles(nodes, {p: [t for t in files[p].imports if t in members and t != p] for p in nodes})
 
 
 def scan(files: dict[str, FileInfo]) -> dict:
