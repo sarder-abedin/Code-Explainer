@@ -12,7 +12,7 @@ code-explainer analyze owner/repo                              # or any git URL
 code-explainer serve path/to/repo --open                       # live: updates as files change
 ```
 
-The core has no dependencies beyond the Python standard library, and the report works offline.
+The core needs only the Python standard library (plus `tomli` on Python 3.10, which has no built-in TOML parser), and the report works offline.
 
 ## Explained at three levels
 
