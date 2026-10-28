@@ -61,7 +61,7 @@ def test_a_file_shows_its_ai_explanation_read_only_and_labelled(repo, page_for):
     assert box.count() == 1
     assert "AI explanation" in box.locator(".aix-label").inner_text()
     head = box.locator(".aix-head").inner_text()
-    assert "llama3.2:3b" in head and "child-friendly" in head and "mistakes" in head
+    assert "llama3.2:3b" in head and "beginner-friendly" in head and "mistakes" in head
     assert box.locator(".aix-text strong").inner_text() == "items" and box.locator(".aix-text code").first.inner_text() == "load"
     assert "</script>" in box.locator(".aix-text").inner_text()           # shown as plain text, never run
     assert page.evaluate("window.pwned") is None

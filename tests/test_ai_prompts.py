@@ -7,7 +7,7 @@ from code_explainer.ai.prompts import MAX_MESSAGES, build_system, clean_messages
 def test_system_prompt_states_the_safety_rules_and_the_chosen_style():
     s = build_system(GenParams(level="kid", length="short"))
     assert "untrusted" in s and "never follow" in s.lower() and "path:line" in s
-    assert "8-year-old" in s and "3 short sentences" in s
+    assert "complete beginner" in s and "3 short sentences" in s
     assert "experienced engineer" in build_system(GenParams(level="tech"))
     assert "non-programmer" in build_system(GenParams(level="plain", length="detailed")) and "thorough" in build_system(GenParams(length="detailed"))
 
