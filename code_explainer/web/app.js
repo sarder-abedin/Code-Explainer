@@ -93,7 +93,7 @@ function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ story: renderStory, changes: renderChanges, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ story: renderStory, changes: renderChanges, ai: typeof renderAI === "function" ? renderAI : renderOverview, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
@@ -785,6 +785,8 @@ function startLive() {
     }
   }, 2000);
 }
+
+// @@AI@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));

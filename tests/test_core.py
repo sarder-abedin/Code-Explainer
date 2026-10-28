@@ -164,3 +164,9 @@ def test_pyproject_scripts_work_without_tomllib(tmp_path):
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert "console script `run`" in out.stdout
+
+
+def test_the_ai_script_is_spliced_into_the_page_exactly_once():
+    from code_explainer import report
+    html = report.render_html(analyze_repo(FIX / "pyapp", "pyapp"))
+    assert html.count("function renderAI(") == 1 and "@@AI@@" not in html and "{{SCRIPT}}" not in html
