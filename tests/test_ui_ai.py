@@ -108,7 +108,12 @@ def pick_and_start(ai, model="qwen2.5-coder:7b"):
 
 
 def ask(ai, text):
-    ai.page.fill("#ai-input", text)
+    # The tab refreshes itself in the background after it is drawn, replacing the text box. A fill that lands on the
+    # old box is lost, so check it stuck (once it has, the draft is kept across repaints) and fill again if not.
+    for _ in range(5):
+        ai.page.fill("#ai-input", text)
+        if ai.page.evaluate("document.getElementById('ai-input').value") == text:
+            break
     ai.page.click("#ai-send")
 
 
@@ -352,6 +357,24 @@ def test_follow_up_questions_include_the_conversation(ai):
     assert body["messages"][2]["content"] == "Hello world"
     ai.page.click("#ai-clear")
     assert ai.page.locator(".ai-msg").count() == 0
+
+
+def test_typing_is_not_interrupted_when_the_panel_refreshes(ai):
+    ready_ai(ai)
+    held = []
+    ai.page.route("**/api/ai/providers", lambda route: held.append(route))     # hold the background refresh back
+    ai.page.select_option("#level", "plain")                                    # redraws the tab and starts that refresh
+    ai.page.click("#ai-input")
+    ai.page.keyboard.type("abc")
+    ai.page.evaluate("document.getElementById('ai-input').dataset.old = '1'")
+    for route in held:
+        route.continue_()                                                       # ...and it arrives while the person is typing
+    ai.page.wait_for_function("!document.getElementById('ai-input').dataset.old")
+    state = ai.page.evaluate("""() => { const i = document.getElementById('ai-input');
+      return { focused: document.activeElement === i, value: i.value, start: i.selectionStart, end: i.selectionEnd }; }""")
+    assert state == {"focused": True, "value": "abc", "start": 3, "end": 3}
+    ai.page.keyboard.type("d")                                                  # keeps going where they were
+    assert ai.page.evaluate("document.getElementById('ai-input').value") == "abcd"
 
 
 def test_answers_follow_the_explain_level_from_the_top_menu(ai):

@@ -127,6 +127,8 @@ class _Project:
         self.data = data
         self.files = {f["path"]: f for f in data["files"]}
         self.by_sid: dict[str, tuple[dict, dict]] = {}
+        self.tests = (data.get("tests") or {}).get("files", {})
+        self.findings = (data.get("hygiene") or {}).get("findings", [])
         self.callers: dict[str, list[str]] = {}
         for f in data["files"]:
             for s in f["symbols"]:
@@ -156,6 +158,8 @@ class _Project:
             line += f"; called by: {', '.join(callers[:6])}" + (f" and {len(callers) - 6} more" if len(callers) > 6 else "")
         else:
             line += "; no caller found in this project"
+        if s["qual"] in self.tests.get(f["path"], {}).get("untested", ()):
+            line += "; no test was seen reaching it"
         return line
 
 
@@ -235,6 +239,14 @@ def _build_file(proj, b, path):
         bits.append(f"Entry point: {why}")
     if f.get("isTest"):
         bits.append("this is a test file")
+    t = proj.tests.get(path)
+    if t:
+        label = {"tested": "fully tested", "partial": "partly tested", "untested": "no test was seen reaching it",
+                 "imported": "only imported by tests, no function called", "unknown": "not known for this language"}[t["state"]]
+        bits.append(f"Tests (static estimate): {label}" + (f"; no test seen reaching: {', '.join(t['untested'][:8])}" if t["state"] == "partial" else ""))
+    notes = [x for x in proj.findings if x["path"] == path and not x["test"]][:5]
+    if notes:
+        bits.append("Safety notes: " + "; ".join(f"{x['title']} (line {x['line']})" for x in notes))
     b.text(f"Facts about {_clean(path)} (exact, from static analysis):\n- {f.get('lines', 0)} lines, {len(syms)} functions/classes"
            + "".join(f"\n- {x}" for x in bits), order=0)
 
@@ -248,6 +260,8 @@ def _build_change(proj, b, path, ch):
     for key in ("added", "modified", "removed"):
         if sy[key]:
             head.append(f"- {key}: {', '.join(sy[key][:12])}")
+    if e.get("untested"):
+        head.append("- changed code that no test was seen reaching: " + ", ".join(e["untested"][:10]))
     if e.get("blast"):
         head.append("- other files that depend on it: " + ", ".join(_clean(x["path"]) for x in e["blast"][:10]))
     for d in ch.get("newDead", []):

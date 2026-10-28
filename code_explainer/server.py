@@ -24,15 +24,11 @@ from .ai import params as ai_params
 from .ai import settings as ai_settings
 from .core import analyze_repo
 from .ingest import IGNORED_DIRS
-from .paths import state_dir
+from .paths import repo_id, state_dir
 from .report import render_html
 
 MAX_BODY = 1_000_000
 POLL_SECONDS = 2.0
-
-
-def repo_id(root: Path) -> str:
-    return hashlib.sha1(str(root.resolve()).encode()).hexdigest()[:12]
 
 
 def signature(root: Path) -> str:

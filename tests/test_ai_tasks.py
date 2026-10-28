@@ -174,3 +174,36 @@ def test_tasks_are_deterministic_and_content_tracks_the_code(data, tmp_path):
 
 def test_template_version_is_a_positive_int():
     assert isinstance(TEMPLATE_VERSION, int) and TEMPLATE_VERSION >= 1
+
+
+# ----------------------------------------------------------------- tests and safety facts
+@pytest.fixture(scope="module")
+def checked(tmp_path_factory):
+    root = tmp_path_factory.mktemp("checked")
+    files = {**SHOP, "tests/test_pricing.py": "from shop.pricing import total\n\n\ndef test_total():\n    assert total([]) == 0\n",
+             "shop/danger.py": "def run(cmd):\n    return eval(cmd)\n", "tests/test_eval.py": "def test_e():\n    eval('1')\n"}
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    return analyze_repo(root, "shop")
+
+
+def test_a_function_task_says_whether_a_test_reaches_it(checked):
+    assert "no test was seen reaching it" not in task(checked, kind="symbol", path="shop/pricing.py", symbol="total").context
+    assert "no test was seen reaching it" in task(checked, kind="symbol", path="shop/cart.py", symbol="items").context
+
+
+def test_a_file_task_carries_the_test_state_and_safety_notes(checked):
+    ctx = task(checked, kind="file", path="shop/pricing.py").context
+    assert "Tests (static estimate): fully tested" in ctx
+    cart = task(checked, kind="file", path="shop/cart.py").context
+    assert "no test was seen reaching it" in cart
+    danger = task(checked, kind="file", path="shop/danger.py").context
+    assert "Safety notes: Runs text as code (eval) (line 2)" in danger and "Safety notes" not in ctx
+    assert "Safety notes" not in task(checked, kind="file", path="tests/test_eval.py").context      # test code is not held to the same bar
+
+
+def test_a_change_task_lists_changed_code_no_test_reaches(repo):
+    d = analyze_repo(repo, "demo", base="HEAD~1")
+    ctx = build_task(d, {"kind": "change", "path": "app/lib.py"}, 4000).context
+    assert "changed code that no test was seen reaching: fresh" in ctx

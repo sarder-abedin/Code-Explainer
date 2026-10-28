@@ -93,7 +93,7 @@ function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ story: renderStory, changes: renderChanges, ai: typeof renderAI === "function" ? renderAI : renderOverview, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ story: renderStory, changes: renderChanges, ai: typeof renderAI === "function" ? renderAI : renderOverview, health: renderHealth, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
@@ -141,7 +141,8 @@ function renderChanges(view) {
       card(`+${fmt(s.linesAdded)} / −${fmt(s.linesDeleted)}`, "lines"),
       card(s.impactedFiles, "other files that depend on the change"),
       card((s.complexityDelta > 0 ? "+" : "") + s.complexityDelta, "complexity change"),
-      card(s.newDead + s.risks + s.newDuplicates, "things to double-check")));
+      card(s.newDead + s.risks + s.newDuplicates, "things to double-check"),
+      card(s.untestedChanged || 0, "changed functions no test was seen reaching")));
   const flags = [];
   for (const r of CH.risks) flags.push(h("li", { onclick: () => BY.has(r.what.split("::")[0]) ? openFile(r.what.split("::")[0]) : null },
     h("span", { class: "badge warn" }, "removed but used"), h("span", {}, h("span", { class: "p" }, r.what), h("span", { class: "why" }, `${r.why}: ${r.users.join(", ")}`))));
@@ -166,6 +167,7 @@ function renderChanges(view) {
       LEVEL !== "tech" ? h("div", { class: "simple" }, rich(T(e.explain))) : h("div", { class: "hint" },
         ["added", "modified", "removed"].filter(k => sy[k].length).map(k => `${k}: ${sy[k].join(", ")}`).join(" · ")),
       e.blast.length ? h("div", { class: "hint" }, "Affects: ", e.blast.slice(0, 8).map((b, j) => [j ? ", " : "", h("a", { class: "link", style: "display:inline", onclick: () => BY.has(b.path) && openFile(b.path) }, base(b.path) + (b.distance > 1 ? ` (${b.distance} steps away)` : ""))]), e.blast.length > 8 ? ` and ${e.blast.length - 8} more` : "") : null,
+      e.untested && e.untested.length ? h("div", { class: "untested hint" }, `⚠ No test was seen reaching: ${e.untested.join(", ")}`) : null,
       aixControls({ kind: "change", path }),
       h("button", { onclick: () => { state.patchOpen = state.patchOpen || new Set(); open ? state.patchOpen.delete(path) : state.patchOpen.add(path); renderAll(); } }, open ? "Hide the changes" : "Show the changes"),
       open ? (e.binary ? h("div", { class: "hint" }, "Binary file.") : diffEl(e.patch)) : null));
@@ -619,7 +621,7 @@ function renderDetail() {
   const links = (arr, empty) => arr.length ? arr.map(p => h("a", { class: "link", tabindex: 0, onclick: () => openFile(p), onkeydown: e => { if (e.key === "Enter") openFile(p); } }, p)) : h("span", { class: "empty", style: "padding:0" }, empty);
   const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "symwrap" },
     h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = state.symOpen === f.path + "::" + sym.qual ? "" : f.path + "::" + sym.qual; openFile(f.path, sym.line); } },
-      h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
+      h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), healthSymbolBadge(f, sym), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
       h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
     LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null,
     aixControls({ kind: "symbol", path: f.path, symbol: sym.qual }, true))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
@@ -639,6 +641,7 @@ function renderDetail() {
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
+      healthDetail(f),
       chg ? h("div", { class: "dsec" }, h("h3", {}, `What changed (+${chg.added} / −${chg.deleted})`), diffEl(chg.patch)) : null,
       h("div", { class: "dsec" }, h("h3", {}, `Symbols (${f.symbols.length})`), syms),
       h("div", { class: "dsec" }, h("h3", {}, `Imports (${f.imports.length})`), links(f.imports, "Imports nothing from this repo.")),
@@ -791,6 +794,7 @@ function startLive() {
 }
 
 // @@AI@@
+// @@HEALTH@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));
