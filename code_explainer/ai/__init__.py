@@ -1,2 +1,2 @@
-"""Optional local-model layer: discovery, settings and (later) chat for Ollama,
-LM Studio and OpenAI-compatible servers. Nothing here runs unless the user asks."""
+"""Optional local-model layer: finds, starts and stops Ollama, LM Studio or an OpenAI-compatible server, then answers
+questions and explains code with it. Nothing here runs unless the user asks."""
