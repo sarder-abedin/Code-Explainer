@@ -5,3 +5,5 @@ build/
 dist/
 .venv/
 report.html
+.coverage
+htmlcov/
