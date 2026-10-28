@@ -20,6 +20,7 @@ class Symbol:
     raw_calls: list = field(default_factory=list)
     # Resolved: [{"id": "path::qual", "conf": "certain"|"inferred", "line": int}]
     callees: list = field(default_factory=list)
+    explain: dict = field(default_factory=dict)  # {"kid": str, "plain": str}
 
     def __post_init__(self):
         if not self.qual:
@@ -29,7 +30,7 @@ class Symbol:
         return {
             "name": self.name, "kind": self.kind, "line": self.line, "end_line": self.end_line,
             "doc": self.doc, "complexity": self.complexity, "parent": self.parent,
-            "qual": self.qual, "entry": self.entry, "callees": self.callees,
+            "qual": self.qual, "entry": self.entry, "callees": self.callees, "explain": self.explain,
         }
 
 
@@ -57,6 +58,7 @@ class FileInfo:
     # local name -> binding tuple (python: (level, module, attr|None); js: (spec, attr))
     bindings: dict = field(default_factory=dict)
     default_export: str = ""
+    explain: dict = field(default_factory=dict)
     parse_error: str = ""
     source: str = ""
     truncated: bool = False
@@ -71,6 +73,7 @@ class FileInfo:
             "complexity": self.complexity,
             "churn": self.churn,
             "doc": self.doc,
+            "explain": self.explain,
             "symbols": [s.to_dict() for s in self.symbols],
             "imports": self.imports,
             "importedBy": self.imported_by,

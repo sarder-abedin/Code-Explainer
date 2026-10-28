@@ -12,6 +12,7 @@ from . import __version__
 from .analysis import CODE_LANGS, analyze_file, detect_language
 from .ingest import git_churn, git_summary, list_files
 from .model import FileInfo
+from .explain import explain_repo
 from .calls import resolve_calls, sym_id
 from .resolve import py_index, resolve_imports
 
@@ -197,19 +198,24 @@ def analyze_repo(root: Path, name: str | None = None) -> dict:
         entry["files"] += 1
         entry["loc"] += f.loc
     edges = [[f.path, t] for f in files.values() for t in f.imports]
+    repo = {
+        "name": name or root.name,
+        "files": len(files),
+        "loc": sum(f.loc for f in files.values()),
+        "languages": langs,
+        "hasHistory": churn is not None,
+        "git": git_summary(root),
+    }
+    reading_order = _reading_order(files)
+    flow_roots = _flow_roots(files)
+    explain = explain_repo(files, flow_roots, reading_order, repo)
     return {
         "version": __version__,
-        "repo": {
-            "name": name or root.name,
-            "files": len(files),
-            "loc": sum(f.loc for f in files.values()),
-            "languages": langs,
-            "hasHistory": churn is not None,
-            "git": git_summary(root),
-        },
+        "repo": repo,
         "files": [files[p].to_dict() for p in sorted(files)],
         "edges": edges,
-        "readingOrder": _reading_order(files),
-        "flowRoots": _flow_roots(files),
+        "readingOrder": reading_order,
+        "flowRoots": flow_roots,
+        "explain": explain,
         "callStats": call_stats,
     }

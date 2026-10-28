@@ -95,3 +95,20 @@ svg text{font-family:var(--font)}
 .nav{display:inline-flex;gap:6px;align-items:center}.nav button{border-color:var(--line)}
 button[disabled]{opacity:.4;cursor:default}
 code{font-family:var(--mono);font-size:12.5px;background:var(--hover);padding:1px 5px;border-radius:4px}
+
+/* story / explain */
+.lvl{color:var(--muted);font-size:13px}.lvl select{margin-left:4px}
+.card.story{max-width:760px;margin:12px auto;padding:22px 26px}
+.card.story h1{font-size:24px;margin:2px 0 12px}
+.card.story p{margin:0 0 10px;font-size:16px;line-height:1.6;white-space:pre-line}
+.card.story.kid p{font-size:18px;line-height:1.7}
+.kicker{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.nav2{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.nav2 button{border-color:var(--line)}.nav2 .primary{background:var(--accent);color:#fff;border-color:var(--accent);margin-left:auto}
+.nav2 .primary[disabled]{background:none;color:inherit;border-color:var(--line)}
+.dots{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:760px;margin:0 auto}
+.dot2{width:30px;height:30px;padding:0;border-radius:50%;border:1px solid var(--line);font-size:12px;color:var(--muted)}
+.dot2.done{background:var(--hover)}.dot2.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.simple{line-height:1.6}.simple.box{background:var(--hover);border-radius:6px;padding:8px 12px;margin:4px 0 8px;font-size:13px}
+.words{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.symwrap .simple.box{margin-left:4.5em}

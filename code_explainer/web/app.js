@@ -35,13 +35,23 @@ const maxOf = k => Math.max(1, ...FILES.map(f => k(f)));
 
 const SYMS = new Map();
 for (const f of FILES) for (const sym of f.symbols) SYMS.set(`${f.path}::${sym.qual}`, { sym, file: f });
-const state = { tab: "overview", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+const EX = D.explain || { folders: {}, story: [], glossary: [] };
+let LEVEL = "kid";
+try { LEVEL = localStorage.getItem("ce.level") || "kid"; } catch (e) { /* storage may be blocked */ }
+if (!["kid", "plain", "tech"].includes(LEVEL)) LEVEL = "kid";
+// Text objects look like {kid, plain}; Technical level reads the plain variant where text is needed.
+const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
+const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
+// `code` spans in generated text become <code> elements.
+const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
+const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
   flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (p.get("tab")) state.tab = p.get("tab");
+  if (p.get("step")) state.storyStep = Math.max(0, +p.get("step") || 0);
   const f = p.get("f");
   state.selected = f && BY.has(f) ? f : null;
   if (p.get("line")) state.line = +p.get("line"); else state.line = 0;
@@ -53,6 +63,7 @@ function writeHash() {
   if (state.selected) p.set("f", state.selected);
   if (state.line) p.set("line", state.line);
   if (state.tab === "flow" && state.flowRoot) p.set("root", state.flowRoot);
+  if (state.tab === "story") p.set("step", state.storyStep);
   history.replaceState(null, "", "#" + p);
 }
 function openFile(path, line) {
@@ -67,16 +78,58 @@ function renderShell() {
   const brand = document.getElementById("brand");
   brand.replaceChildren(r.name, h("small", {}, `${fmt(r.files)} files · ${fmt(r.loc)} lines` + (r.git && r.git.head ? ` · ${r.git.head}` : "")));
   for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => setTab(b.dataset.tab);
+  const sel = document.getElementById("level");
+  sel.value = LEVEL;
+  sel.onchange = () => { LEVEL = sel.value; try { localStorage.setItem("ce.level", LEVEL); } catch (e) { /* ignore */ } renderAll(); };
 }
 function renderAll() {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === state.tab);
   const view = document.getElementById("view");
   view.replaceChildren();
-  ({ overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
+  ({ story: renderStory, words: renderWords, overview: renderOverview, flow: renderFlow, treemap: renderTreemap, graph: renderGraph }[state.tab] || renderOverview)(view);
   renderDetail();
 }
 function markSelected() {
   for (const el of document.querySelectorAll("[data-path]")) el.classList.toggle("sel", el.dataset.path === state.selected);
+}
+
+// ---------- story (guided tour) ----------
+function renderStory(view) {
+  const steps = EX.story;
+  if (!steps.length) { view.append(h("div", { class: "empty" }, "Nothing to tell yet.")); return; }
+  state.storyStep = Math.max(0, Math.min(steps.length - 1, state.storyStep));
+  const st = steps[state.storyStep];
+  const go = i => { state.storyStep = i; writeHash(); renderAll(); if (steps[i].path) openFile(steps[i].path, steps[i].line); };
+  const dots = h("div", { class: "dots", role: "tablist", "aria-label": "Tour steps" }, steps.map((x, i) =>
+    h("button", { class: "dot2" + (i === state.storyStep ? " on" : i < state.storyStep ? " done" : ""), title: T(x.title), "aria-label": `Step ${i + 1}: ${T(x.title)}`, onclick: () => go(i) }, String(i + 1))));
+  const paras = T(st.text).split("\n").map(line => h("p", {}, rich(line)));
+  const hit = st.symbol && SYMS.get(st.symbol);
+  const src = hit && hit.file.source ? hit.file.source.split("\n").slice(hit.sym.line - 1, Math.min(hit.sym.end_line, hit.sym.line + 24)).join("\n") : "";
+  const card = h("article", { class: "card story" + (LEVEL === "kid" ? " kid" : "") },
+    h("div", { class: "kicker" }, `Step ${state.storyStep + 1} of ${steps.length}`),
+    h("h1", {}, T(st.title)), paras,
+    src ? h("pre", { class: "snip" }, src + (hit.sym.end_line - hit.sym.line >= 25 ? "\n…" : "")) : null,
+    h("div", { class: "nav2" },
+      h("button", { onclick: () => go(state.storyStep - 1), disabled: state.storyStep === 0 }, "◀ Back"),
+      st.path ? h("button", { onclick: () => openFile(st.path, st.line) }, "Show me the code") : null,
+      h("button", { class: "primary", onclick: () => go(state.storyStep + 1), disabled: state.storyStep === steps.length - 1 }, "Next ▶")));
+  view.append(dots, card, h("p", { class: "hint" },
+    "Everything here is worked out from the code itself: names, comments, who borrows from whom, who asks whom for help. "
+    + "When something is only a guess from a name, the text says so. Use the “Explain” menu at the top to change how it is told."));
+  markSelected();
+}
+
+// ---------- words (glossary) ----------
+function renderWords(view) {
+  const q = h("input", { type: "search", placeholder: "Find a word…", "aria-label": "Filter words", oninput: () => draw() });
+  const box = h("div", { class: "words" });
+  function draw() {
+    const f = q.value.trim().toLowerCase();
+    box.replaceChildren(...EX.glossary.filter(g => !f || g.term.toLowerCase().includes(f) || g.kid.toLowerCase().includes(f) || g.plain.toLowerCase().includes(f))
+      .map(g => h("div", { class: "card" }, h("h3", { style: "margin:0 0 4px;font-size:15px" }, g.term), h("div", {}, LEVEL === "kid" ? g.kid : g.plain),
+        LEVEL === "kid" ? h("div", { class: "hint" }, "Grown-up version: " + g.plain) : null)));
+  }
+  view.append(h("div", { class: "toolbar" }, q), box); draw();
 }
 
 // ---------- overview ----------
@@ -196,6 +249,8 @@ function renderTreemap(view) {
   });
   view.append(h("div", { class: "toolbar" }, h("label", {}, "Colour by ", sel), crumbs,
     h("span", {}, "Box area = lines of code. Click a folder to zoom in, a file to inspect it.")));
+  const fx = state.tmRoot && EX.folders[state.tmRoot];
+  if (fx && LEVEL !== "tech") view.append(h("div", { class: "simple box" }, (LEVEL === "kid" ? fx.emoji + " " : ""), rich(T(fx))));
   const W = Math.max(480, view.clientWidth - 34), H = Math.max(360, Math.min(window.innerHeight - 170, W * 0.62));
   const svg = s("svg", { id: "tm", viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Treemap of the repository" });
   const root = buildTree(state.tmRoot);
@@ -211,13 +266,13 @@ function renderTreemap(view) {
         const col = tileColor(c.file);
         const g = s("g", { class: "tile", "data-path": c.file.path, onclick: () => openFile(c.file.path) },
           s("rect", { x: r.x, y: r.y, width: r.w, height: r.h, fill: col.fill, "fill-opacity": col.op }));
-        tip(g, `${c.file.path}\n${fmt(c.file.loc)} lines · complexity ${c.file.complexity}` + (c.file.churn ? ` · ${c.file.churn} commits` : "") + (c.file.unused ? "\npossibly unused" : ""));
+        tip(g, `${c.file.path}\n${LEVEL !== "tech" && c.file.explain ? firstSentence(T(c.file.explain), 160) + "\n" : ""}${fmt(c.file.loc)} lines · complexity ${c.file.complexity}` + (c.file.churn ? ` · ${c.file.churn} commits` : "") + (c.file.unused ? "\npossibly unused" : ""));
         if (r.w > 46 && r.h > 14) g.append(s("text", { x: r.x + 4, y: r.y + 12, "font-size": 11, "clip-path": "none" }, clip(c.name, r.w)));
         svg.append(g);
       } else {
         const g = s("g", { class: "tile" , onclick: () => { state.tmRoot = c.path; renderAll(); } },
           s("rect", { x: r.x, y: r.y, width: r.w, height: r.h, fill: "var(--hover)", "fill-opacity": 0.6 }));
-        tip(g, `${c.path}/\n${fmt(c.value)} lines`);
+        tip(g, `${c.path}/\n${fmt(c.value)} lines` + (EX.folders[c.path] && LEVEL !== "tech" ? "\n" + T(EX.folders[c.path]) : ""));
         svg.append(g);
         const showHead = r.w > 40 && r.h > HEAD + 8;
         if (showHead) {
@@ -336,7 +391,7 @@ function renderGraph(view) {
                         : s("circle", { r, fill: LANG_COLOR[n.lang] || "#999" });
     const label = n.dir ? `${base(n.id)}/ (${n.files})` : base(n.id);
     const el = s("g", { class: "node", "data-path": n.dir ? "" : n.id, tabindex: 0 }, shape,
-      s("text", { x: r + 3, y: 4 }, label), s("title", {}, n.dir ? `${n.id}/ · ${n.files} files · ${fmt(n.loc)} lines (click to expand)` : n.id));
+      s("text", { x: r + 3, y: 4 }, label), s("title", {}, n.dir ? `${n.id}/ · ${n.files} files · ${fmt(n.loc)} lines (click to expand)` + (EX.folders[n.id] && LEVEL !== "tech" ? "\n" + T(EX.folders[n.id]) : "") : n.id));
     n.el = el; g.append(el);
     let moved = false;
     el.addEventListener("pointerdown", ev => {
@@ -453,7 +508,7 @@ function renderFlow(view) {
       r.repeat ? h("span", { class: "badge" }, "↻ shown above") : null,
       r.cyc ? h("span", { class: "badge" }, "↺ calls itself") : null,
       r.cut ? h("span", { class: "badge" }, `+${r.nKids} deeper`) : null,
-      r.sym.doc ? h("span", { class: "d" }, r.sym.doc) : null,
+      (LEVEL !== "tech" && r.sym.explain ? firstSentence(T(r.sym.explain), 110) : r.sym.doc) ? h("span", { class: "d" }, (LEVEL !== "tech" && r.sym.explain ? firstSentence(T(r.sym.explain), 110) : r.sym.doc).replace(/`/g, "")) : null,
       h("span", { class: "loc" }, `${base(r.file.path)}:${r.sym.line}`)));
   });
   view.append(list);
@@ -466,7 +521,7 @@ function stepCard(r, vis) {
   return h("div", { class: "card step" },
     h("div", { class: "t" }, "Now running: ", h("b", {}, symLabel(r.sym)), h("span", { class: "loc" }, ` ${r.file.path}:${r.sym.line}`)),
     parent ? h("div", { class: "hint" }, `Called by ${symLabel(parent.sym)} at line ${r.via}.`) : h("div", { class: "hint" }, "This is where it starts."),
-    r.sym.doc ? h("div", {}, r.sym.doc) : null,
+    LEVEL !== "tech" && r.sym.explain ? h("div", { class: "simple" }, rich(T(r.sym.explain))) : (r.sym.doc ? h("div", {}, r.sym.doc) : null),
     src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null);
 }
 
@@ -483,9 +538,11 @@ function renderDetail() {
   if (f.parseError) badges.push(h("span", { class: "badge warn", title: f.parseError }, "parse error"));
   const m = (n, l) => h("div", {}, h("b", {}, String(n)), h("span", {}, l));
   const links = (arr, empty) => arr.length ? arr.map(p => h("a", { class: "link", tabindex: 0, onclick: () => openFile(p), onkeydown: e => { if (e.key === "Enter") openFile(p); } }, p)) : h("span", { class: "empty", style: "padding:0" }, empty);
-  const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "sym", title: sym.doc, onclick: () => openFile(f.path, sym.line) },
-    h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, (sym.parent ? sym.parent + "." : "") + sym.name), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
-    h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : "")))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
+  const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "symwrap" },
+    h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = state.symOpen === f.path + "::" + sym.qual ? "" : f.path + "::" + sym.qual; openFile(f.path, sym.line); } },
+      h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
+      h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
+    LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null)) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
   const code = h("div", { class: "code", id: "code" });
   const lines = f.source ? f.source.split("\n") : [];
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
@@ -497,6 +554,7 @@ function renderDetail() {
     h("div", { class: "dhead" }, h("button", { class: "x", "aria-label": "Close", onclick: () => { state.selected = null; writeHash(); renderDetail(); markSelected(); } }, "✕"),
       h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null),
     h("div", { class: "dbody" },
+      LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
       h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
       h("div", { class: "dsec" }, h("h3", {}, `Symbols (${f.symbols.length})`), syms),
