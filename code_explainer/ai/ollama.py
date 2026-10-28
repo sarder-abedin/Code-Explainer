@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from .base import ModelInfo, Provider, as_int, expect_list, looks_like_embedding
+import threading
+from typing import Iterator
+
+from .base import ModelInfo, Provider, as_int, expect_list, looks_like_embedding, parse_json_line
 from .http import ProviderError, request_json
 
 
@@ -47,3 +50,47 @@ class Ollama(Provider):
                 if k.endswith(".context_length"):
                     return as_int(v)
         return None
+
+    # ------------------------------------------------------------ lifecycle and chat
+    supports_load = True
+
+    def load(self, model: str, options: dict, keep_alive: str | int = "10m", **kw) -> str | None:
+        """An empty chat loads the model without generating (applies num_ctx)."""
+        body = {"model": model, "messages": [], "keep_alive": keep_alive}
+        if options:
+            body["options"] = options
+        self._post("/api/chat", body, timeout=300.0)
+        return model
+
+    def unload(self, handle: str) -> None:
+        self._post("/api/chat", {"model": handle, "messages": [], "keep_alive": 0}, timeout=30.0)
+
+    def stream_chat(self, model, messages, options, cancel: threading.Event, *, idle_timeout=120.0, tick_seconds=5.0,
+                    keep_alive: str | int | None = None, **kw) -> Iterator[dict]:
+        body = {"model": model, "messages": messages, "stream": True, "options": options}
+        if keep_alive is not None:
+            body["keep_alive"] = keep_alive
+        got_text = False
+        for line in self._stream("/api/chat", body, cancel, idle_timeout, tick_seconds).lines():
+            if line is None:
+                yield {"type": "tick"}
+                continue
+            obj = parse_json_line(line)
+            if not isinstance(obj, dict):
+                continue  # blank or unreadable line
+            if obj.get("error"):
+                raise ProviderError("http", str(obj["error"]))
+            msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+            if msg.get("thinking") and not msg.get("content"):
+                yield {"type": "thinking"}
+            if msg.get("content"):
+                got_text = True
+                yield {"type": "token", "text": msg["content"]}
+            if obj.get("done"):
+                evals, dur = as_int(obj.get("eval_count")), as_int(obj.get("eval_duration"))
+                yield {"type": "done", "truncated": obj.get("done_reason") == "length",
+                       "stats": {"prompt_tokens": as_int(obj.get("prompt_eval_count")), "completion_tokens": evals,
+                                 "tokens_per_second": round(evals / dur * 1e9, 1) if evals and dur else None}}
+                return
+        raise ProviderError("bad_response", "the connection closed before the answer finished" if got_text
+                            else "the model returned an empty answer")

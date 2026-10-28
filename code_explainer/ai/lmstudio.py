@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from .base import ModelInfo, Provider, as_int, expect_list, looks_like_embedding
 from .http import ProviderError
+from .openai_compat import OpenAIChatMixin
 
 _KIND = {"llm": "llm", "vlm": "llm", "embedding": "embedding", "embeddings": "embedding"}
 
 
-class LMStudio(Provider):
+class LMStudio(OpenAIChatMixin, Provider):
     name = "lmstudio"
     label = "LM Studio"
     default_url = "http://127.0.0.1:1234"
@@ -60,3 +61,21 @@ class LMStudio(Provider):
                 last = e
         assert last is not None
         raise last
+
+    # ------------------------------------------------------------ lifecycle (documented REST endpoints)
+    supports_load = True
+
+    def load(self, model: str, options: dict, **kw) -> str | None:
+        body = {"model": model}
+        if options.get("context_size"):
+            body["context_length"] = options["context_size"]
+        try:
+            resp = self._post("/api/v1/models/load", body, timeout=300.0)
+        except ProviderError as e:
+            if e.status in (404, 405):
+                raise ProviderError("unsupported", "this LM Studio version cannot load models over its REST API") from e
+            raise
+        return str(resp.get("instance_id") or model) if isinstance(resp, dict) else model
+
+    def unload(self, handle: str) -> None:
+        self._post("/api/v1/models/unload", {"instance_id": handle}, timeout=30.0)
