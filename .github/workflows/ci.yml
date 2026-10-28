@@ -27,9 +27,10 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: pip install -e '.[dev,treesitter]'
+      - run: pip install -e '.[dev,treesitter]' coverage
       # The browser test has its own job; skip it here.
-      - run: pytest --ignore=tests/test_ui.py
+      - run: coverage run --source=code_explainer -m pytest --ignore=tests/test_ui.py
+      - run: coverage report -m --fail-under=90
 
   no-treesitter:
     name: Tests without tree-sitter (regex fallback)
@@ -39,9 +40,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e '.[dev]'
+      - run: pip install -e '.[dev]' coverage
       - run: python -c "import code_explainer.analysis.javascript_ts as t; assert not t.AVAILABLE"
-      - run: pytest --ignore=tests/test_ui.py -rs
+      - run: coverage run --source=code_explainer -m pytest --ignore=tests/test_ui.py -rs
+      - run: coverage report -m --fail-under=80
 
   ui:
     name: Browser smoke test

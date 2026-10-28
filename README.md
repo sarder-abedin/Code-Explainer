@@ -12,7 +12,7 @@ code-explainer analyze owner/repo                              # or any git URL
 code-explainer serve path/to/repo --open                       # live: updates as files change
 ```
 
-The core has no dependencies beyond the Python standard library, and the report works offline.
+The core needs only the Python standard library (plus `tomli` on Python 3.10, which has no built-in TOML parser), and the report works offline.
 
 ## Explained at three levels
 
@@ -82,6 +82,10 @@ pip install -e '.[dev,treesitter]'
 playwright install chromium     # for the browser tests; or set CHROMIUM_PATH
 pytest
 ```
+
+Work test-first: run the whole suite before you change anything (so you know the baseline is
+green), write a failing test for the new behaviour or bug, make it pass, then run the whole suite
+again. CI enforces a coverage floor (90%, or 80% without tree-sitter).
 
 CI runs the tests on Python 3.10 to 3.13, with and without tree-sitter, plus a browser test and
 a package build. Pushing a `v*` tag publishes to PyPI (trusted publishing) and creates a GitHub release.

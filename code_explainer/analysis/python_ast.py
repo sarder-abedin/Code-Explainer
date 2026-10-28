@@ -56,29 +56,32 @@ def _chain(node: ast.AST) -> list[str]:
 
 
 def _calls_in(nodes: list[ast.AST], skip_defs: bool) -> list[tuple[list[str], int]]:
-    """Call sites under `nodes`. With skip_defs, function bodies are not entered
-    (their calls belong to the function), but decorators and defaults are."""
-    out: list[tuple[list[str], int]] = []
+    """Call sites under `nodes`, in the order they run. With skip_defs, function
+    bodies are not entered (their calls belong to the function), but decorators
+    and defaults are."""
+    found: list[tuple[int, int, list[str], int]] = []
     stack = list(nodes)
     while stack:
         n = stack.pop()
         if isinstance(n, ast.Call):
             chain = _chain(n.func)
             if chain != ["?"]:
-                out.append((chain, n.lineno))
+                # An inner call (`get()` in `get().x()`, or `b()` in `a(b())`) ends before the
+                # call that uses its result, so ordering by end position gives execution order.
+                found.append((n.end_lineno or n.lineno, n.end_col_offset or 0, chain, n.lineno))
         if skip_defs and isinstance(n, _FUNCS):
             stack.extend(n.decorator_list)
             stack.extend(n.args.defaults + [d for d in n.args.kw_defaults if d])
             continue
         stack.extend(ast.iter_child_nodes(n))
-    out.sort(key=lambda c: c[1])
-    seen, dedup = set(), []
-    for chain, line in out:
+    found.sort(key=lambda c: (c[0], c[1]))
+    seen, out = set(), []
+    for _el, _ec, chain, line in found:
         key = (tuple(chain), line)
         if key not in seen:
             seen.add(key)
-            dedup.append((chain, line))
-    return dedup
+            out.append((chain, line))
+    return out
 
 
 def _entry_from_decorators(node: ast.AST) -> str:

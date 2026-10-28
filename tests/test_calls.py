@@ -94,3 +94,58 @@ def test_regex_fallback_has_no_call_graph(tmp_path, monkeypatch):
     d, f = build(tmp_path, {"a.js": "function a() { b(); }\nfunction b() {}\n"})
     assert f["a.js"]["analyzer"] == "regex" and f["a.js"]["hasCalls"] is False
     assert [s["name"] for s in f["a.js"]["symbols"]] == ["a", "b"]
+
+
+def test_python_dotted_package_chains_and_class_methods(tmp_path):
+    d, f = build(tmp_path, {
+        "src/shop/__init__.py": "",
+        "src/shop/cart/__init__.py": "",
+        "src/shop/cart/items.py": "def add():\n    pass\n\nclass Box:\n    def open(self):\n        pass\n    def shut(self):\n        self.open()\n",
+        "main.py": (
+            "import shop.cart.items\nfrom shop.cart import items as it\nfrom shop.cart.items import Box\n\n"
+            "class Local:\n    def go(self):\n        pass\n    def run(self):\n        self.go()\n        Local.go(self)\n\n"
+            "def use():\n    shop.cart.items.add()\n    it.add()\n    Box.open(None)\n    it.Box.open(None)\n    Local.go(None)\n"),
+    })
+    use = callees(f["main.py"], "use")
+    assert use == {"src/shop/cart/items.py::add": "certain", "src/shop/cart/items.py::Box.open": "certain",
+                   "main.py::Local.go": "certain"}
+    assert callees(f["main.py"], "Local.run") == {"main.py::Local.go": "certain"}
+    assert callees(f["src/shop/cart/items.py"], "Box.shut") == {"src/shop/cart/items.py::Box.open": "certain"}
+
+
+def test_reexport_chain_and_unfollowable_imports(tmp_path):
+    d, f = build(tmp_path, {
+        "pkg/__init__.py": "from .impl import work\n",
+        "pkg/impl.py": "def work():\n    pass\n",
+        "user.py": "from pkg import work\nfrom missing_lib import thing\nimport requests\n\ndef go():\n    work()\n    thing()\n    requests.get('x')\n    unknown()\n",
+    })
+    assert callees(f["user.py"], "go") == {"pkg/impl.py::work": "certain"}   # followed through the re-export; externals ignored
+
+
+def test_self_call_to_missing_method_falls_back_to_inference(tmp_path):
+    d, f = build(tmp_path, {"a.py": "class A:\n    def x(self):\n        self.helper()\n\nclass B:\n    def helper(self):\n        pass\n"})
+    assert callees(f["a.py"], "A.x") == {"a.py::B.helper": "inferred"}
+
+
+def test_dunder_methods_are_never_inferred(tmp_path):
+    d, f = build(tmp_path, {"a.py": "class A:\n    def __init__(self):\n        pass\n\ndef use(o):\n    o.__init__()\n"})
+    assert callees(f["a.py"], "use") == {}
+
+
+def test_certain_beats_inferred_for_the_same_target(tmp_path):
+    d, f = build(tmp_path, {"a.py": "class A:\n    def go(self):\n        pass\n    def run(self, other):\n        other.go()\n        self.go()\n"})
+    assert callees(f["a.py"], "A.run") == {"a.py::A.go": "certain"}
+
+
+@needs_ts
+def test_typescript_default_class_namespace_and_reexport(tmp_path):
+    d, f = build(tmp_path, {
+        "a.ts": "import Svc from './svc';\nimport { work } from './barrel';\nimport * as u from './util';\nexport function main() { Svc.make(); work(); u.helper(); new Svc(); }\n",
+        "svc.ts": "export default class Svc { static make() {} }\n",
+        "barrel.ts": "export { work } from './impl';\n",
+        "impl.ts": "export function work() {}\n",
+        "util.ts": "export function helper() {}\n",
+    })
+    main = callees(f["a.ts"], "main")
+    assert main["svc.ts::Svc.make"] == "certain" and main["util.ts::helper"] == "certain" and main["svc.ts::Svc"] == "certain"
+    assert "impl.ts::work" not in main  # barrel `export … from` re-exports are not followed (documented limit)

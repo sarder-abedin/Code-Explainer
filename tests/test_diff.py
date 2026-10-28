@@ -58,3 +58,81 @@ def test_duplicates_overview_needs_enough_lines(tmp_path):
     (tmp_path / "c.py").write_text(f"def one(items):\n{BODY}\ndef two(items):\n{BODY}")
     dups = analyze_repo(tmp_path)["duplicates"]
     assert len(dups) == 1 and len(dups[0]["members"]) == 2
+
+
+PATCH = """diff --git a/a.py b/a.py
+index 111..222 100644
+--- a/a.py
++++ b/a.py
+@@ -1,5 +1,6 @@
+ line1
+-old
++new
++extra
+ line3
+ line4
+-gone
+@@ -20,2 +21,2 @@
+ ctx
+-- sql style comment
+diff --git a/new.py b/new.py
+new file mode 100644
+--- /dev/null
++++ b/new.py
+@@ -0,0 +1,2 @@
++a
++b
+diff --git a/old name.py b/renamed.py
+similarity index 90%
+rename from old name.py
+rename to renamed.py
+diff --git a/img.png b/img.png
+Binary files a/img.png and b/img.png differ
+diff --git a/dead.py b/dead.py
+deleted file mode 100644
+--- a/dead.py
++++ /dev/null
+@@ -1,1 +0,0 @@
+-x
+"""
+
+
+def test_parse_patch_counts_and_changed_lines():
+    from code_explainer.diff import parse_patch
+    files = parse_patch(PATCH)
+    a = files["a.py"]
+    assert (a["added"], a["deleted"]) == (2, 3)                 # "-- sql style comment" is a deletion, not a header
+    # added lines (2, 3) plus the line just before each deletion (1, 5, 21); pure context lines are not counted
+    assert a["changed"] == {1, 2, 3, 5, 21}
+    assert files["new.py"]["status"] == "A" and files["new.py"]["changed"] == {1, 2}
+    assert files["renamed.py"]["status"] == "R" and files["renamed.py"]["oldPath"] == "old name.py"
+    assert files["img.png"]["binary"] and files["dead.py"]["status"] == "D"
+    assert "@@ -1,5 +1,6 @@" in a["patch"] and "index 111" not in a["patch"]
+
+
+def test_patch_is_truncated_when_huge():
+    from code_explainer import diff
+    big = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -0,0 +1,5000 @@\n" + "\n".join("+" + "y" * 40 for _ in range(5000))
+    p = diff.parse_patch(big)["x.py"]["patch"]
+    assert len(p) <= diff.MAX_PATCH_BYTES + 40 and p.endswith("(patch truncated)")
+
+
+def test_unchanged_neighbour_is_not_marked_modified(repo):
+    # `report` sits right below a changed function; context lines must not make it "modified"
+    lib = analyze_repo(repo, "r", base="HEAD~1", head="HEAD")["changes"]["files"]["app/lib.py"]["symbols"]
+    assert "report" not in lib["modified"]
+
+
+def test_snapshot_extracts_only_regular_files(repo):
+    from code_explainer.diff import snapshot
+    (repo / "link.py").symlink_to(repo / "app/lib.py")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "link")
+    with snapshot(repo, "HEAD") as root:
+        assert (root / "app/lib.py").is_file() and not (root / "link.py").exists()
+    assert not root.exists()
+
+
+def test_review_with_no_changes(repo):
+    ch = analyze_repo(repo, "r", base="HEAD")["changes"]
+    assert ch["summary"]["files"] == 0 and ch["reviewOrder"] == [] and ch["newDead"] == []

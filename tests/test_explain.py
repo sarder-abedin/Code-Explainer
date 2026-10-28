@@ -63,3 +63,87 @@ def test_story_without_entry_points_still_works(tmp_path):
     (tmp_path / "a.py").write_text("def helper():\n    return 1\n")
     story = analyze_repo(tmp_path)["explain"]["story"]
     assert story[0]["title"]["plain"] == "Overview"
+
+
+import pytest
+
+from code_explainer.analysis import analyze_file
+from code_explainer.explain import _list, _plural, _shape, _size_word, explain_file, explain_folders, explain_symbol
+
+
+@pytest.mark.parametrize("n, word", [(3, "tiny"), (14, "tiny"), (15, "small"), (60, "medium-sized"), (200, "big"), (600, "huge")])
+def test_size_words(n, word):
+    assert _size_word(n) == word
+
+
+def test_list_and_plural_helpers():
+    assert _list([]) == "" and _list(["a"]) == "`a`" and _list(["a", "b"]) == "`a` and `b`"
+    assert _list(["a", "b", "c", "d", "e", "f"], 3) == "`a`, `b`, `c` and 3 more"
+    assert _list(["a", "b"], quote=False) == "a and b"
+    assert _plural(1, "room") == "1 room" and _plural(2, "class", "classes") == "2 classes"
+
+
+@pytest.mark.parametrize("cx, kid_bit, plain_bit", [
+    (1, "straight line", "no branching"), (3, "couple of choices", "A few branches"),
+    (6, "quite a few choices", "Several branches"), (20, "tricky", "Highly branched"),
+])
+def test_shape_thresholds(cx, kid_bit, plain_bit):
+    k, p = _shape(cx, 12)
+    assert kid_bit in k and plain_bit in p and "12 lines" in k
+
+
+def finfo(path, src="", lang=None, **kw):
+    from code_explainer.analysis import detect_language
+    f = analyze_file(path, lang or detect_language(path), src)
+    for k, v in kw.items():
+        setattr(f, k, v)
+    return f
+
+
+@pytest.mark.parametrize("path, kid_bit, plain_bit", [
+    ("README.md", "welcome note", "readme"),
+    ("Dockerfile", "recipe for packing", "container"),
+    (".gitignore", "should not be saved", "ignore"),
+    ("data/config.json", "tidy list", "JSON"),
+    ("db/schema.sql", "database", "database"),
+    ("scripts/run.sh", "to-do list of commands", "shell script"),
+    ("app/utils.py", "toolbox", "shared helpers"),
+    ("app/models.py", "shapes", "data shapes"),
+    ("app/views.py", "doorbell", "incoming requests"),
+    ("app/__init__.py", "group", "package"),
+])
+def test_file_role_guesses_are_phrased_as_guesses(path, kid_bit, plain_bit):
+    e = explain_file(finfo(path, "x = 1\n" if path.endswith(".py") else "x"))
+    assert kid_bit in e["kid"] and plain_bit.lower() in e["plain"].lower()
+    if path.endswith(".py"):
+        assert "from its name" in e["kid"].lower() and "judging by its name" in e["plain"].lower()
+
+
+def test_file_explanation_flags():
+    f = finfo("a.py", "def f():\n    pass\n", churn=12, possibly_unused=True)
+    e = explain_file(f)
+    assert "changed this room a lot (12 times)" in e["kid"] and "12 commits" in e["plain"]
+    assert "Nobody seems to visit" in e["kid"]
+    f = finfo("b.py", "x = 1\n", entry_reasons=["named like main"], imports=["c.py"], imported_by=["d.py", "e.py"])
+    e = explain_file(f)
+    assert "front door" in e["kid"] and "Entry point: named like main." in e["plain"]
+    assert "d.py" in e["kid"] and "borrows tools from: c.py" in e["kid"]
+
+
+def test_class_module_and_entry_symbol_explanations():
+    f = finfo("a.py", '"""Doc."""\nclass Cart:\n    """Holds items."""\n    def add(self):\n        pass\n    def _hidden(self):\n        pass\n\nclass Empty:\n    pass\n\n@app.route("/x")\ndef index():\n    pass\n\nprint(1)\n')
+    ex = {s.qual: explain_symbol("a.py", s, f, {}, {}) for s in f.symbols}
+    assert "recipe" in ex["Cart"]["kid"] and "Holds items." in ex["Cart"]["kid"] and "add" in ex["Cart"]["kid"] and "_hidden" not in ex["Cart"]["kid"]
+    assert "does not list any special tricks" in ex["Empty"]["kid"]
+    assert "wakes up" in ex["<module>"]["kid"] or "wakes" in ex["<module>"]["kid"] or "file wakes up" in ex["<module>"]["kid"]
+    assert "outside world can start here" in ex["index"]["kid"] and "Entry point" in ex["index"]["plain"]
+    assert "No helper in the project asks" not in ex["index"]["kid"]  # entry points are expected to have no callers
+
+
+def test_folder_explanations_hinted_and_generic():
+    files = {"tests/test_a.py": finfo("tests/test_a.py", "x=1\n"), "src/pkg/mod.py": finfo("src/pkg/mod.py", "x=1\n"),
+             "src/pkg/two.py": finfo("src/pkg/two.py", "x=1\n")}
+    fo = explain_folders(files)
+    assert fo["tests"]["hinted"] and fo["tests"]["emoji"] == "🔍"
+    assert fo["src/pkg"]["hinted"] is False and "2 rooms" in fo["src/pkg"]["kid"] and "Mostly Python" in fo["src/pkg"]["plain"]
+    assert set(fo) == {"tests", "src", "src/pkg"}
