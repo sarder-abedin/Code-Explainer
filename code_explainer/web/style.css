@@ -112,3 +112,13 @@ code{font-family:var(--mono);font-size:12.5px;background:var(--hover);padding:1p
 .simple{line-height:1.6}.simple.box{background:var(--hover);border-radius:6px;padding:8px 12px;margin:4px 0 8px;font-size:13px}
 .words{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
 .symwrap .simple.box{margin-left:4.5em}
+
+/* changes */
+.card.chg{margin-bottom:12px}
+.chead{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.chead .num{color:var(--muted);width:1.6em}
+.chead .loc{margin-left:auto;color:var(--muted);font:12px var(--mono)}
+.chips{margin:6px 0}.card.chg .simple{margin:4px 0}.card.chg button{margin-top:6px;border-color:var(--line)}
+.patch{margin:8px 0 0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 0;font:12px/17px var(--mono);overflow:auto;max-height:420px}
+.patch span{display:block;padding:0 10px;white-space:pre}
+.patch .add{background:rgba(46,158,91,.18)}.patch .del{background:rgba(224,70,70,.18)}.patch .hunk{color:var(--muted);background:var(--hover)}
+[hidden]{display:none!important}
