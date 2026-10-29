@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 
+from .. import flowgraph
 from ..model import FileInfo, Symbol
 
 _DECISIONS = (
@@ -97,19 +98,24 @@ def _entry_from_decorators(node: ast.AST) -> str:
     return ""
 
 
-def _collect(body: list[ast.stmt], parent: str | None, out: list[Symbol]) -> None:
+def _collect(body: list[ast.stmt], parent: str | None, out: list[Symbol], lines: list[str]) -> None:
     for node in body:
         if isinstance(node, ast.ClassDef):
             sym = Symbol(node.name, "class", node.lineno, node.end_lineno or node.lineno,
                          _first_line(ast.get_docstring(node)), complexity(node), parent)
             out.append(sym)
-            _collect(node.body, sym.qual, out)
+            _collect(node.body, sym.qual, out, lines)
         elif isinstance(node, _FUNCS):
             kind = "method" if parent else "function"
             sym = Symbol(node.name, kind, node.lineno, node.end_lineno or node.lineno,
                          _first_line(ast.get_docstring(node)), complexity(node), parent)
             sym.raw_calls = _calls_in(node.body, skip_defs=False)
             sym.entry = _entry_from_decorators(node)
+            try:
+                graph = flowgraph.build_python(node, lines)
+                sym.flow = flowgraph.finalize(graph) if graph else None
+            except RecursionError:   # absurdly deep nesting: no chart, but the analysis carries on
+                sym.flow = None
             out.append(sym)
 
 
@@ -124,7 +130,7 @@ def analyze(info: FileInfo, source: str) -> None:
     info.has_calls = True
     info.doc = _first_line(ast.get_docstring(tree))
     info.complexity = complexity(tree)
-    _collect(tree.body, None, info.symbols)
+    _collect(tree.body, None, info.symbols, source.splitlines())
 
     # Top-level code (including the `__main__` guard and decorators) acts as a
     # pseudo-symbol so scripts have something to start a flow from.

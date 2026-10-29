@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from .. import flowgraph, flowgraph_js
 from ..model import FileInfo, Symbol
 
 try:
@@ -164,6 +165,11 @@ def _make_symbol(cx: _Ctx, name: str, kind: str, node, body, parent, doc_node) -
                  cx.complexity(node), parent)
     if kind != "class" and body is not None:
         cx.walk_calls(body, sym.raw_calls)
+        try:
+            graph = flowgraph_js.build_js(cx.data, body)
+            sym.flow = flowgraph.finalize(graph) if graph else None
+        except RecursionError:   # absurdly deep nesting: no chart, but the analysis carries on
+            sym.flow = None
     return sym
 
 
