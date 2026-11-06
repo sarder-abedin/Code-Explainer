@@ -27,7 +27,7 @@ function s(tag, attrs, ...kids) {
 const fmt = n => n.toLocaleString();
 const base = p => p.slice(p.lastIndexOf("/") + 1);
 const dirOf = p => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
-const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#edc948", "#76b7b2", "#e15759", "#9c755f", "#af7aa1", "#86bcb6", "#bab0ac"];
+const PALETTE = ["#7ea6d8", "#eea66b", "#8cc58a", "#c39bd3", "#e8cb5c", "#7cc4bd", "#e8908d", "#c4a581", "#d79bc2", "#93cfcb", "#bdb7a8"];   // soft tones: dark labels stay readable on them
 const maxOf = k => Math.max(1, ...FILES.map(f => k(f)));
 
 // Everything derived from the analysis lives here so serve mode can swap in fresh data.
@@ -305,16 +305,16 @@ function squarify(items, x, y, w, hgt) {
 }
 function tileColor(f) {
   const m = state.colorBy;
-  if (m === "lang") return { fill: LANG_COLOR[f.lang] || "#999", op: 0.85 };
+  if (m === "lang") return { fill: LANG_COLOR[f.lang] || "#bdb7a8", op: 0.85 };
   if (m === "changed") {
     const c = CH.files[f.path];
-    return c ? { fill: c.status === "A" ? "#2e9e5b" : "#e0a030", op: 0.95 } : { fill: "#888", op: 0.12 };
+    return c ? { fill: c.status === "A" ? "#6dbb8a" : "#eab85a", op: 0.95 } : { fill: "#888", op: 0.12 };
   }
-  if (m === "understood") return isUnderstood(f.path) ? { fill: "#2e9e5b", op: 0.95 } : { fill: "#888", op: 0.15 };
-  if (m === "unused") return f.unused ? { fill: "#e15759", op: 0.9 } : { fill: "#888", op: 0.15 };
+  if (m === "understood") return isUnderstood(f.path) ? { fill: "#6dbb8a", op: 0.95 } : { fill: "#888", op: 0.15 };
+  if (m === "unused") return f.unused ? { fill: "#e8908d", op: 0.9 } : { fill: "#888", op: 0.15 };
   const mx = METRICS[m].max;
   const t = Math.sqrt(Math.min(1, METRICS[m].val(f) / mx));
-  return { fill: "var(--accent)", op: 0.1 + 0.85 * t };
+  return { fill: "#5f8fd0", op: 0.12 + 0.72 * t };
 }
 function renderTreemap(view) {
   for (const k of Object.keys(METRICS)) if (METRICS[k].val) METRICS[k].max = maxOf(METRICS[k].val);
@@ -368,7 +368,7 @@ function renderTreemap(view) {
 function clip(text, w) { const n = Math.max(1, Math.floor((w - 8) / 6.2)); return text.length > n ? text.slice(0, Math.max(1, n - 1)) + "…" : text; }
 function legendFor() {
   if (state.colorBy === "lang") return h("div", { class: "legend hint" }, langs.slice(0, 10).map(([n]) => h("span", {}, h("i", { class: "dot", style: `background:${LANG_COLOR[n]}` }), n)));
-  if (state.colorBy === "changed") return h("div", { class: "hint legend" }, h("span", {}, h("i", { class: "dot", style: "background:#2e9e5b" }), "new file"), h("span", {}, h("i", { class: "dot", style: "background:#e0a030" }), "changed or moved"), h("span", {}, "grey = untouched"));
+  if (state.colorBy === "changed") return h("div", { class: "hint legend" }, h("span", {}, h("i", { class: "dot", style: "background:#6dbb8a" }), "new file"), h("span", {}, h("i", { class: "dot", style: "background:#eab85a" }), "changed or moved"), h("span", {}, "grey = untouched"));
   if (state.colorBy === "understood") { const ps = progressStats(); return h("div", { class: "hint" }, `Green = you marked it understood (${ps.pct}% of the code so far). Grey = still to explore.`); }
   if (state.colorBy === "unused") return h("div", { class: "hint" }, "Red = no other file imports it and it is not an entry point.");
   return h("div", { class: "hint" }, `Darker = higher ${METRICS[state.colorBy].label.toLowerCase()} (max ${fmt(METRICS[state.colorBy].max)}).` +
@@ -469,7 +469,7 @@ function renderGraph(view) {
   for (const n of list) {
     const r = radius(n);
     const shape = n.dir ? s("rect", { x: -r, y: -r * 0.75, width: r * 2, height: r * 1.5, rx: 3, fill: "var(--accent)", "fill-opacity": 0.75 })
-                        : s("circle", { r, fill: LANG_COLOR[n.lang] || "#999" });
+                        : s("circle", { r, fill: LANG_COLOR[n.lang] || "#bdb7a8" });
     const label = n.dir ? `${base(n.id)}/ (${n.files})` : base(n.id);
     const el = s("g", { class: "node", "data-path": n.dir ? "" : n.id, tabindex: 0 }, shape,
       s("text", { x: r + 3, y: 4 }, label), s("title", {}, n.dir ? `${n.id}/ · ${n.files} files · ${fmt(n.loc)} lines (click to expand)` + (EX.folders[n.id] && LEVEL !== "tech" ? "\n" + T(EX.folders[n.id]) : "") : n.id));
