@@ -1,3 +1,5 @@
+<p align="center"><img src="code_explainer/web/logo.svg" width="96" alt="Code Explainer logo"></p>
+
 # Code Explainer
 
 Code written by a coding agent (or someone else) is hard to follow once there is a lot of it.
