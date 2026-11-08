@@ -50,37 +50,57 @@ const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
 const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
 // `code` spans in generated text become <code> elements.
 const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
-const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
-  chart: "", comp: "", flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
+const state = { tab: "story", storyStep: 0, symOpen: "", ctOpen: "", uses: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+  chart: "", comp: "", ptab: "summary", sym: "", hfile: "", focusChange: "", flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
+const PTABS = [["summary", "Summary"], ["code", "Code"], ["links", "Connections"], ["quality", "Tests & safety"]];
+try { const saved = localStorage.getItem("ce.ptab"); if (PTABS.some(([k]) => k === saved)) state.ptab = saved; } catch (e) { /* storage may be blocked */ }
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (p.get("tab")) state.tab = p.get("tab");
+  if (PTABS.some(([k]) => k === p.get("pt"))) state.ptab = p.get("pt");
+  state.sym = p.get("sym") || "";
+  state.hfile = p.get("hf") || "";
   state.chart = p.get("chart") || "";
   state.comp = p.get("comp") || "";
   if (p.get("step")) state.storyStep = Math.max(0, +p.get("step") || 0);
   const f = p.get("f");
   state.selected = f && BY.has(f) ? f : null;
   if (p.get("line")) state.line = +p.get("line"); else state.line = 0;
+  if (state.line && !p.get("pt")) state.ptab = "code";     // a link to a line is a link to the code
   if (p.get("root") && SYMS.has(p.get("root"))) state.flowRoot = p.get("root");
 }
-function writeHash() {
+// `push` makes a history entry, so the Back button returns to where you were; quieter changes just replace the address.
+function writeHash(push) {
   const p = new URLSearchParams();
   p.set("tab", state.tab);
   if (state.selected) p.set("f", state.selected);
   if (state.line) p.set("line", state.line);
+  if (state.selected && state.ptab !== "summary") p.set("pt", state.ptab);
+  if (state.selected && state.sym) p.set("sym", state.sym);
   if (state.chart) p.set("chart", state.chart);
   if (state.comp && state.tab === "map") p.set("comp", state.comp);
+  if (state.tab === "health" && state.hfile) p.set("hf", state.hfile);
   if (state.tab === "flow" && state.flowRoot) p.set("root", state.flowRoot);
   if (state.tab === "story") p.set("step", state.storyStep);
-  history.replaceState(null, "", "#" + p);
+  const next = "#" + p;
+  if (next === location.hash) return;
+  if (push) history.pushState(null, "", next); else history.replaceState(null, "", next);
 }
-function openFile(path, line) {
+function setPtab(k, render = true) {
+  state.ptab = k;
+  try { localStorage.setItem("ce.ptab", k); } catch (e) { /* storage may be blocked */ }
+  if (render) { writeHash(); renderDetail(); }
+}
+function openFile(path, line, sym) {
+  if (path !== state.selected) state.sym = "";
+  if (sym !== undefined) state.sym = sym || "";
   state.selected = path; state.line = line || 0;
-  writeHash(); renderDetail(); markSelected();
+  if (line) setPtab("code", false);
+  writeHash(true); renderDetail(); markSelected();
 }
-function setTab(t) { state.tab = t; writeHash(); renderAll(); }
+function setTab(t) { state.tab = t; state.focusChange = ""; writeHash(true); renderAll(); }
 
 // ---------- shell ----------
 function renderShell() {
@@ -163,7 +183,7 @@ function renderChanges(view) {
     const e = CH.files[path], st = STATUS[e.status] || ["changed", ""];
     const open = state.patchOpen && state.patchOpen.has(path);
     const sy = e.symbols;
-    view.append(h("div", { class: "card chg" },
+    view.append(h("div", { class: "card chg" + (state.focusChange === path ? " focus" : "") },
       h("div", { class: "chead" }, h("span", { class: "num" }, String(i + 1)), h("span", { class: "badge " + st[1] }, st[0]),
         h("a", { class: "link", style: "display:inline", onclick: () => BY.has(path) && openFile(path) }, e.oldPath ? `${e.oldPath} → ${path}` : path),
         h("span", { class: "loc" }, `+${e.added} / −${e.deleted}`)),
@@ -176,6 +196,8 @@ function renderChanges(view) {
       h("button", { onclick: () => { state.patchOpen = state.patchOpen || new Set(); open ? state.patchOpen.delete(path) : state.patchOpen.add(path); renderAll(); } }, open ? "Hide the changes" : "Show the changes"),
       open ? (e.binary ? h("div", { class: "hint" }, "Binary file.") : diffEl(e.patch)) : null));
   });
+  const focused = view.querySelector(".card.chg.focus");
+  if (focused) focused.scrollIntoView({ block: "center" });
   markSelected();
 }
 
@@ -212,6 +234,7 @@ function renderOverview(view) {
   const code = FILES.filter(f => f.analyzed);
   const edges = D.edges.length;
   view.append(
+    startCard(),
     h("div", { class: "grid" },
       [[fmt(r.files), "files"], [fmt(r.loc), "lines of code"], [fmt(code.length), "files parsed"], [fmt(edges), "internal imports"],
        [r.git && r.git.commits != null ? fmt(r.git.commits) : "n/a", "commits"]].map(([n, l]) =>
@@ -224,8 +247,9 @@ function renderOverview(view) {
         h("div", { class: "hint" }, "Tick “I understand this file” in the file panel as you go. " + (SERVE ? "Saved on this computer." : "Saved in this browser.")));
     })(),
     h("div", { class: "cols" },
-      listOf("Next to learn", "from the reading order, skipping what you know",
-        D.readingOrder.filter(o => !isUnderstood(o.path)).slice(0, 6).map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
+      D.readingOrder.some(o => isUnderstood(o.path))          // until something is ticked it would only repeat "Start here"
+        ? listOf("Next to learn", "from the reading order, skipping what you know",
+          D.readingOrder.filter(o => !isUnderstood(o.path)).slice(0, 6).map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))) : null,
       PROG.bookmarks.filter(p => BY.has(p)).length ? listOf("Bookmarks", "", PROG.bookmarks.filter(p => BY.has(p)).map(p => fileRow(BY.get(p), null, PROG.notes[p] ? PROG.notes[p].slice(0, 80) : ""))) : null,
       listOf("Start here", "read in this order",
         D.readingOrder.map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
@@ -549,15 +573,18 @@ function visibleFlow(rows) {
   return out;
 }
 function renderFlow(view) {
-  const roots = D.flowRoots;
-  if (!roots.length) {
+  const found = D.flowRoots;
+  if (!found.length && !SYMS.has(state.flowRoot)) {
     view.append(h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "No starting points found"),
       h("p", {}, "This tab follows what runs, step by step, from a starting point such as a command, a web route, or a script's `main()`. None were found with call information."),
       FILES.some(f => (f.lang === "JavaScript" || f.lang === "TypeScript") && !f.hasCalls)
         ? h("p", {}, "JavaScript/TypeScript call tracing needs tree-sitter: ", h("code", {}, "pip install 'code-explainer[treesitter]'"), ".") : null));
     return;
   }
-  if (!SYMS.has(state.flowRoot)) state.flowRoot = roots[0].id;
+  if (!SYMS.has(state.flowRoot)) state.flowRoot = found[0].id;
+  // A function chosen from the file panel is a starting point too, even when it is not a usual entry point.
+  const roots = found.some(r => r.id === state.flowRoot) ? found
+    : [{ id: state.flowRoot, name: symLabel(SYMS.get(state.flowRoot).sym), why: "chosen from the file panel" }, ...found];
   const rows = buildFlow(state.flowRoot), vis = visibleFlow(rows);
   if (state.flowStep >= vis.length) state.flowStep = vis.length - 1;
   const sel = h("select", { "aria-label": "Starting point", onchange: e => { state.flowRoot = e.target.value; state.flowOpen.clear(); state.flowStep = -1; writeHash(); renderAll(); } },
@@ -603,9 +630,58 @@ function stepCard(r, vis) {
     h("div", { class: "t" }, "Now running: ", h("b", {}, symLabel(r.sym)), h("span", { class: "loc" }, ` ${r.file.path}:${r.sym.line}`)),
     parent ? h("div", { class: "hint" }, `Called by ${symLabel(parent.sym)} at line ${r.via}.`) : h("div", { class: "hint" }, "This is where it starts."),
     LEVEL !== "tech" && r.sym.explain ? h("div", { class: "simple" }, rich(T(r.sym.explain))) : (r.sym.doc ? h("div", {}, r.sym.doc) : null),
+    contractBlock(r.sym),
     src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null,
     chartButton(r.file, r.sym),
     aixControls({ kind: "flow", path: r.file.path, symbol: r.sym.qual, parent: parent ? `${parent.file.path}::${parent.sym.qual}` : undefined }));
+}
+
+// ---------- detail panel ----------
+// ---------- the bar that jumps to the same file or function in other views ----------
+function bestFlowSid(f) {
+  const fns = f.symbols.filter(x => x.kind !== "class" && (x.kind !== "module" || (x.callees || []).length));
+  if (!fns.length) return "";
+  const certain = x => (x.callees || []).filter(c => c.conf === "certain").length;
+  const rootHere = D.flowRoots.find(r => r.path === f.path);
+  const pick = fns.find(x => x.entry) || (rootHere && fns.find(x => `${f.path}::${x.qual}` === rootHere.id))
+    || fns.slice().sort((x, y) => certain(y) - certain(x) || x.line - y.line)[0];
+  return `${f.path}::${pick.qual}`;
+}
+
+function lensBar(f) {
+  const A = D.architecture, comp = A && A.fileMap && A.fileMap[f.path];
+  const hits = D.hygiene ? D.hygiene.findings.filter(x => x.path === f.path).length : 0;
+  const sym = state.sym ? f.symbols.find(x => x.qual === state.sym) : null;
+  const flowSid = sym && sym.kind !== "class" ? `${f.path}::${sym.qual}` : bestFlowSid(f);
+  const here = () => { state.selected = f.path; };
+  const btn = (key, label, tip, enabled, go) => h("button", { class: "lens-btn", "data-lens": key, title: tip, disabled: !enabled, onclick: go }, label);
+  const jump = (tab, prep) => () => { prep && prep(); state.tab = tab; state.focusChange = ""; writeHash(true); renderAll(); };
+  const chips = [];
+  if (sym && sym.flow) chips.push(btn("chart", "▦ Flowchart", "Draw this function step by step", true, e => openChart(`${f.path}::${sym.qual}`, e.currentTarget)));
+  chips.push(
+    btn("map", "Map", comp ? "Show the part of the project this file belongs to, on the map" : "This file is not on the map (tests and empty package files are left out)", !!comp,
+      jump("map", () => { ARCH.sel = { type: "comp", id: comp }; state.comp = comp; })),
+    btn("flow", "Flow", flowSid ? "Follow what runs from here, step by step" : "There are no functions in this file to follow", !!flowSid,
+      jump("flow", () => { state.flowRoot = flowSid; state.flowOpen.clear(); state.flowStep = -1; })),
+    btn("graph", "Dependencies", "Show what this file imports and what imports it", true,
+      jump("graph", () => { const parts = f.path.split("/"); for (let i = 1; i < parts.length; i++) state.expanded.add(parts.slice(0, i).join("/")); if (!f.imports.length && !f.importedBy.length) state.showIsolated = true; here(); })),
+    btn("treemap", "Treemap", "Show this file's folder as boxes sized by lines of code", true, jump("treemap", () => { state.tmRoot = dirOf(f.path); here(); })),
+    btn("health", hits ? `Health (${hits})` : "Health", hits ? `Show the ${hits} safety finding${hits === 1 ? "" : "s"} in this file, and how well it is tested` : "Show how well this file is tested and that nothing risky was found",
+      true, jump("health", () => { state.hfile = f.path; })));
+  if (CH) chips.push(btn("changes", "Changes", CH.files[f.path] ? "Jump to what changed in this file" : "This file was not changed in the review", !!CH.files[f.path],
+    () => { state.tab = "changes"; state.focusChange = f.path; writeHash(true); renderAll(); }));
+  return h("div", { class: "lens" }, h("span", { class: "lens-where" }, base(f.path), sym ? " › " : "", sym ? h("span", { class: "lens-focus" }, sym.kind === "module" ? "top-level code" : sym.qual) : null),
+    h("span", { class: "lens-label" }, "Show in:"), chips);
+}
+
+function ptabKeys(e) {
+  const keys = PTABS.map(([k]) => k), i = keys.indexOf(state.ptab);
+  const next = { ArrowRight: (i + 1) % keys.length, ArrowLeft: (i + keys.length - 1) % keys.length, Home: 0, End: keys.length - 1 }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  setPtab(keys[next]);
+  const on = document.querySelector("#detail [role=tab][aria-selected=true]");
+  if (on) on.focus();
 }
 
 // ---------- detail panel ----------
@@ -614,7 +690,7 @@ function renderDetail() {
   const f = state.selected && BY.get(state.selected);
   if (!f) { el.hidden = true; return; }
   el.hidden = false;
-  const keep = el.dataset.path === f.path ? ((el.querySelector(".dbody") || {}).scrollTop || 0) : 0;
+  const keep = el.dataset.path === f.path && el.dataset.ptab === state.ptab ? ((el.querySelector(".dbody") || {}).scrollTop || 0) : 0;
   const badges = [h("span", { class: "badge" }, f.lang)];
   if (f.entry.length) badges.push(h("span", { class: "badge ok", title: f.entry.join("; ") }, "entry point"));
   if (f.isTest) badges.push(h("span", { class: "badge" }, "test"));
@@ -625,43 +701,49 @@ function renderDetail() {
   const m = (n, l) => h("div", {}, h("b", {}, String(n)), h("span", {}, l));
   const links = (arr, empty) => arr.length ? arr.map(p => h("a", { class: "link", tabindex: 0, onclick: () => openFile(p), onkeydown: e => { if (e.key === "Enter") openFile(p); } }, p)) : h("span", { class: "empty", style: "padding:0" }, empty);
   const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "symwrap" },
-    h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = state.symOpen === f.path + "::" + sym.qual ? "" : f.path + "::" + sym.qual; openFile(f.path, sym.line); } },
+    h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = f.path + "::" + sym.qual; openFile(f.path, sym.line, sym.qual); } },
       h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), healthSymbolBadge(f, sym), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
-      h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
+      h("span", { class: "ln", title: `Starts on line ${sym.line}` + (sym.complexity > 1 ? `. Complexity ${sym.complexity}: the number of different paths through it (more paths means more to test).` : "") }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
     LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null,
+    contractBlock(sym),
     chartButton(f, sym),
     aixControls({ kind: "symbol", path: f.path, symbol: sym.qual }, true))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
-  const code = h("div", { class: "code", id: "code" });
-  const lines = f.source ? f.source.split("\n") : [];
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  if (f.source) {
-    code.append(h("pre", { class: "g" }, lines.map((_, i) => i + 1).join("\n")), h("pre", { class: "s" }, f.source));
-    if (state.line) { code.append(h("div", { class: "hl", style: `top:${6 + (state.line - 1) * 18}px` })); }
-  }
-  el.replaceChildren(
-    h("div", { class: "dhead" }, h("button", { class: "x", "aria-label": "Close", onclick: () => { state.selected = null; writeHash(); renderDetail(); markSelected(); } }, "✕"),
-      h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null),
-    h("div", { class: "dbody" },
+  const code = f.source ? readerCode(f) : h("div", { class: "code", id: "code" });
+  const findings = D.hygiene ? D.hygiene.findings.filter(x => x.path === f.path).length : 0;
+  const nLinks = f.imports.length + f.importedBy.length;
+  const quality = healthDetail(f);
+  const panels = {
+    summary: [
       progressControls(f),
-      archLink(f),
       (ex => (ex ? h("div", { class: "dsec" }, ex) : null))(aixControls({ kind: "file", path: f.path })),
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
-      h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
+      h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), (el => { el.title = "Complexity: how many different paths the code can take. Higher means harder to read and test."; return el; })(m(f.analyzed ? f.complexity : "–", "complexity")), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
-      healthDetail(f),
       chg ? h("div", { class: "dsec" }, h("h3", {}, `What changed (+${chg.added} / −${chg.deleted})`), diffEl(chg.patch)) : null,
-      h("div", { class: "dsec" }, h("h3", {}, `Symbols (${f.symbols.length})`), syms),
+      h("div", { class: "dsec" }, h("h3", {}, `Functions and classes (${f.symbols.length})`), syms)],
+    code: [h("div", { class: "dsec" }, h("h3", {}, "Source" + (f.truncated ? " (too large to embed)" : "")), f.source ? code : h("span", { class: "empty", style: "padding:0" }, "Source not embedded.")), f.source ? readerUses(f) : null],
+    links: [archLink(f),
       h("div", { class: "dsec" }, h("h3", {}, `Imports (${f.imports.length})`), links(f.imports, "Imports nothing from this repo.")),
-      h("div", { class: "dsec" }, h("h3", {}, `Imported by (${f.importedBy.length})`), links(f.importedBy, "Nothing imports this file.")),
-      h("div", { class: "dsec" }, h("h3", {}, "Source" + (f.truncated ? " (too large to embed)" : "")), f.source ? code : h("span", { class: "empty", style: "padding:0" }, "Source not embedded."))));
-  if (state.line && f.source) {
+      h("div", { class: "dsec" }, h("h3", {}, `Imported by (${f.importedBy.length})`), links(f.importedBy, "Nothing imports this file."))],
+    quality: quality.length ? quality : [h("div", { class: "dsec" }, h("span", { class: "empty", style: "padding:0" }, "Nothing to show here: no test information or safety findings for this file."))],
+  };
+  const counts = { links: nLinks, quality: findings };
+  el.replaceChildren(
+    h("div", { class: "dhead" }, h("button", { class: "x", "aria-label": "Close", onclick: () => { state.selected = null; state.sym = ""; writeHash(true); renderDetail(); markSelected(); } }, "✕"),
+      h("div", { class: "t" }, f.path), h("div", {}, badges), f.doc ? h("div", { class: "d", style: "color:var(--muted);margin-top:4px" }, f.doc) : null,
+      lensBar(f)),
+    h("div", { class: "ptabs", role: "tablist", "aria-label": "Parts of this file", onkeydown: ptabKeys },
+      PTABS.map(([k, label]) => h("button", { role: "tab", id: `pt-${k}`, "data-ptab": k, "aria-selected": String(state.ptab === k), "aria-controls": `pp-${k}`,
+        tabindex: state.ptab === k ? "0" : "-1", class: state.ptab === k ? "on" : "", onclick: () => setPtab(k) }, counts[k] ? `${label} (${counts[k]})` : label))),
+    h("div", { class: "dbody" }, PTABS.map(([k]) => h("div", { role: "tabpanel", id: `pp-${k}`, "data-panel": k, "aria-labelledby": `pt-${k}`, hidden: state.ptab !== k }, panels[k]))));
+  if (state.line && f.source && state.ptab === "code") {
     const c = document.getElementById("code");
     c.scrollTop = Math.max(0, (state.line - 6) * 18);
     c.scrollIntoView({ block: "nearest" });
   }
   const body = el.querySelector(".dbody");
   body.scrollTop = state.line ? body.scrollTop : keep;
-  el.dataset.path = f.path;
+  el.dataset.path = f.path; el.dataset.ptab = state.ptab;
 }
 
 // ---------- search ----------
@@ -804,6 +886,9 @@ function startLive() {
 // @@HEALTH@@
 // @@CHART@@
 // @@ARCH@@
+// @@CONTRACT@@
+// @@READER@@
+// @@GUIDE@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));
@@ -811,6 +896,7 @@ if (CH) state.colorBy = "changed";
 readHash();
 renderShell();
 initSearch();
+setupGuide();
 renderAll();
 chartSync();
 loadProgress().then(() => { renderAll(); startLive(); });

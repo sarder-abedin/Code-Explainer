@@ -418,3 +418,55 @@ def test_ctrl_c_still_writes_the_report_with_what_is_done(servers, repo, tmp_pat
     err = capsys.readouterr().err
     assert code == 0 and out.exists() and '"aiExplain"' in out.read_text()
     assert "stopped" in err.lower() and "run the same command again" in err.lower()
+
+
+# ----------------------------------------------------------------- parts of the map
+def pkg_data(tmp_path):
+    write(tmp_path, {"app/__init__.py": "", "app/web/__init__.py": "", "app/web/v.py": "from app.core import p\n\n\ndef home():\n    return p.total([1])\n",
+                     "app/core/__init__.py": "", "app/core/p.py": "def total(x):\n    return sum(x)\n", "app/core/q.py": "def q():\n    return 1\n",
+                     "app/db/__init__.py": "", "app/db/s.py": "def load():\n    return 1\n"})
+    return analyze_repo(tmp_path, "app")
+
+
+def test_the_biggest_parts_of_the_map_are_picked_but_only_when_the_limit_leaves_room(tmp_path):
+    data = pkg_data(tmp_path)
+    assert batch.pick_part_targets(data, 4) == []                                          # too small a budget
+    one = batch.pick_part_targets(data, 5)
+    assert [t["part"] for t in one] == ["app/core"] and one[0]["kind"] == "part" and one[0]["path"] == "app/core" and one[0]["why"]
+    two = batch.pick_part_targets(data, 50)
+    assert len(two) == batch.MAX_PARTS == 2 and two[0]["part"] == "app/core"
+    assert batch.pick_part_targets({"files": []}, 50) == []                                # no map at all
+
+
+def test_a_full_run_also_explains_parts_and_keeps_to_the_limit(servers, tmp_path):
+    s = fake_ollama(servers)
+    data = pkg_data(tmp_path / "p")
+    r = batch.generate(data, tmp_path / "cache", "qwen2.5-coder:7b", limit=5, level="plain")
+    assert len(r.items) <= 5 and "part|app/core" in r.items and r.items["part|app/core"]["kind"] == "part"
+    assert data["aiExplain"]["items"]["part|app/core"]["text"] == "Short answer."
+    assert len(chats(s)) == len(r.items) == r.generated
+
+
+def test_files_and_parts_together_never_exceed_the_limit(tmp_path):
+    files = {"app/__init__.py": "", "app/web/__init__.py": "", "app/core/__init__.py": "", "app/db/__init__.py": ""}
+    for i in range(6):
+        files[f"app/web/v{i}.py"] = f"from app.core import p{i}\n\n\ndef h{i}():\n    return p{i}.f()\n"
+        files[f"app/core/p{i}.py"] = "def f():\n    return 1\n"
+    files["app/web/main.py"] = "".join(f"from app.web import v{i}\n" for i in range(6)) + "\n\ndef run():\n    return 1\n"
+    files["app/db/s.py"] = "\n".join(f"x{i} = {i}" for i in range(80)) + "\n"
+    write(tmp_path, files)
+    data = analyze_repo(tmp_path, "app")
+    assert len(batch.pick_targets(data, 10)) == 10
+    picked = batch.pick_all(data, 10)
+    assert len(picked) == 10 and [t["kind"] for t in picked].count("part") == 2
+    assert [t["kind"] for t in picked][-2:] == ["part", "part"]                              # the parts come after the files
+    assert batch.pick_all(data, 4) == batch.pick_targets(data, 4)
+
+
+def test_parts_are_chosen_by_how_many_files_they_hold_before_how_big_they_are(tmp_path):
+    files = {"app/__init__.py": "", "app/web/__init__.py": "", "app/web/v.py": "\n".join(f"x{i} = {i}" for i in range(200)) + "\n",
+             "app/core/__init__.py": "", "app/core/a.py": "def a():\n    return 1\n", "app/core/b.py": "def b():\n    return 2\n",
+             "app/db/__init__.py": "", "app/db/s.py": "def load():\n    return 1\n"}
+    write(tmp_path, files)
+    got = [t["part"] for t in batch.pick_part_targets(analyze_repo(tmp_path, "app"), 50)]
+    assert got == ["app/core", "app/web"]

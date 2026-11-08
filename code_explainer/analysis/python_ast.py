@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from .. import flowgraph
+from .. import contract, flowgraph
 from ..model import FileInfo, Symbol
 
 _DECISIONS = (
@@ -111,6 +111,7 @@ def _collect(body: list[ast.stmt], parent: str | None, out: list[Symbol], lines:
                          _first_line(ast.get_docstring(node)), complexity(node), parent)
             sym.raw_calls = _calls_in(node.body, skip_defs=False)
             sym.entry = _entry_from_decorators(node)
+            sym.contract = contract.python_facts(node, bool(parent))
             try:
                 graph = flowgraph.build_python(node, lines)
                 sym.flow = flowgraph.finalize(graph) if graph else None
