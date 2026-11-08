@@ -234,6 +234,7 @@ function renderOverview(view) {
   const code = FILES.filter(f => f.analyzed);
   const edges = D.edges.length;
   view.append(
+    startCard(),
     h("div", { class: "grid" },
       [[fmt(r.files), "files"], [fmt(r.loc), "lines of code"], [fmt(code.length), "files parsed"], [fmt(edges), "internal imports"],
        [r.git && r.git.commits != null ? fmt(r.git.commits) : "n/a", "commits"]].map(([n, l]) =>
@@ -246,8 +247,9 @@ function renderOverview(view) {
         h("div", { class: "hint" }, "Tick “I understand this file” in the file panel as you go. " + (SERVE ? "Saved on this computer." : "Saved in this browser.")));
     })(),
     h("div", { class: "cols" },
-      listOf("Next to learn", "from the reading order, skipping what you know",
-        D.readingOrder.filter(o => !isUnderstood(o.path)).slice(0, 6).map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
+      D.readingOrder.some(o => isUnderstood(o.path))          // until something is ticked it would only repeat "Start here"
+        ? listOf("Next to learn", "from the reading order, skipping what you know",
+          D.readingOrder.filter(o => !isUnderstood(o.path)).slice(0, 6).map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))) : null,
       PROG.bookmarks.filter(p => BY.has(p)).length ? listOf("Bookmarks", "", PROG.bookmarks.filter(p => BY.has(p)).map(p => fileRow(BY.get(p), null, PROG.notes[p] ? PROG.notes[p].slice(0, 80) : ""))) : null,
       listOf("Start here", "read in this order",
         D.readingOrder.map((o, i) => fileRow(BY.get(o.path), i + 1, o.why))),
@@ -701,7 +703,7 @@ function renderDetail() {
   const syms = f.symbols.length ? f.symbols.map(sym => h("div", { class: "symwrap" },
     h("div", { class: "sym", title: sym.doc, onclick: () => { state.symOpen = f.path + "::" + sym.qual; openFile(f.path, sym.line, sym.qual); } },
       h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), healthSymbolBadge(f, sym), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
-      h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
+      h("span", { class: "ln", title: `Starts on line ${sym.line}` + (sym.complexity > 1 ? `. Complexity ${sym.complexity}: the number of different paths through it (more paths means more to test).` : "") }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
     LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null,
     contractBlock(sym),
     chartButton(f, sym),
@@ -715,7 +717,7 @@ function renderDetail() {
       progressControls(f),
       (ex => (ex ? h("div", { class: "dsec" }, ex) : null))(aixControls({ kind: "file", path: f.path })),
       LEVEL !== "tech" && f.explain ? h("div", { class: "dsec" }, h("h3", {}, LEVEL === "kid" ? "In simple words" : "Summary"), h("div", { class: "simple" }, rich(T(f.explain)))) : null,
-      h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), m(f.analyzed ? f.complexity : "–", "complexity"), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
+      h("div", { class: "dsec" }, h("div", { class: "metrics" }, m(fmt(f.loc), "lines"), (el => { el.title = "Complexity: how many different paths the code can take. Higher means harder to read and test."; return el; })(m(f.analyzed ? f.complexity : "–", "complexity")), m(D.repo.hasHistory ? f.churn : "–", "commits"), m(f.importedBy.length, "used by"))),
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
       chg ? h("div", { class: "dsec" }, h("h3", {}, `What changed (+${chg.added} / −${chg.deleted})`), diffEl(chg.patch)) : null,
       h("div", { class: "dsec" }, h("h3", {}, `Functions and classes (${f.symbols.length})`), syms)],
@@ -886,6 +888,7 @@ function startLive() {
 // @@ARCH@@
 // @@CONTRACT@@
 // @@READER@@
+// @@GUIDE@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));
@@ -893,6 +896,7 @@ if (CH) state.colorBy = "changed";
 readHash();
 renderShell();
 initSearch();
+setupGuide();
 renderAll();
 chartSync();
 loadProgress().then(() => { renderAll(); startLive(); });
