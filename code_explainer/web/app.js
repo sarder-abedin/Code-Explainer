@@ -50,7 +50,7 @@ const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
 const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
 // `code` spans in generated text become <code> elements.
 const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
-const state = { tab: "story", storyStep: 0, symOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+const state = { tab: "story", storyStep: 0, symOpen: "", ctOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
   chart: "", comp: "", ptab: "summary", sym: "", hfile: "", focusChange: "", flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
@@ -628,6 +628,7 @@ function stepCard(r, vis) {
     h("div", { class: "t" }, "Now running: ", h("b", {}, symLabel(r.sym)), h("span", { class: "loc" }, ` ${r.file.path}:${r.sym.line}`)),
     parent ? h("div", { class: "hint" }, `Called by ${symLabel(parent.sym)} at line ${r.via}.`) : h("div", { class: "hint" }, "This is where it starts."),
     LEVEL !== "tech" && r.sym.explain ? h("div", { class: "simple" }, rich(T(r.sym.explain))) : (r.sym.doc ? h("div", {}, r.sym.doc) : null),
+    contractBlock(r.sym),
     src.length ? h("pre", { class: "snip" }, src.join("\n") + (r.sym.end_line - r.sym.line >= 30 ? "\n…" : "")) : null,
     chartButton(r.file, r.sym),
     aixControls({ kind: "flow", path: r.file.path, symbol: r.sym.qual, parent: parent ? `${parent.file.path}::${parent.sym.qual}` : undefined }));
@@ -702,6 +703,7 @@ function renderDetail() {
       h("span", { class: "k" }, sym.kind), h("span", {}, h("span", { class: "nm" }, sym.kind === "module" ? "(top-level code)" : sym.qual), healthSymbolBadge(f, sym), sym.doc ? h("div", { class: "d" }, sym.doc) : null),
       h("span", { class: "ln" }, `L${sym.line}` + (sym.complexity > 1 ? ` · cx ${sym.complexity}` : ""))),
     LEVEL !== "tech" && state.symOpen === f.path + "::" + sym.qual && sym.explain ? h("div", { class: "simple box" }, rich(T(sym.explain))) : null,
+    contractBlock(sym),
     chartButton(f, sym),
     aixControls({ kind: "symbol", path: f.path, symbol: sym.qual }, true))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
   const code = h("div", { class: "code", id: "code" });
@@ -888,6 +890,7 @@ function startLive() {
 // @@HEALTH@@
 // @@CHART@@
 // @@ARCH@@
+// @@CONTRACT@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));
