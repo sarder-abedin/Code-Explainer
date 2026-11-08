@@ -80,6 +80,10 @@ of your browser follow every file and tab you visit, and the address always link
 fail with, what outside systems it uses) that opens into a card. Facts come from the syntax tree and the certain
 edges of the call graph only; guesses are never counted. The same card shows in the flowchart panel and the Flow step.
 
+**Reading code.** The Code tab colours Python, JavaScript and TypeScript, turns calls into links to their definitions
+(certain calls only, and Back returns you), marks risky lines, untested functions and lines changed in a review in the
+margin, and puts a use count on every definition that opens into "Used like this" with each call site and test.
+
 ## Review what an agent changed
 
 ```bash
