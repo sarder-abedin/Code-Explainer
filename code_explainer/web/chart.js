@@ -206,7 +206,7 @@ function chartInfo() {
   if (!box || !hit) return;
   if (CHART.mermaid) { box.replaceChildren(chartMermaidPanel(hit)); return; }
   const n = hit.sym.flow.nodes.find(x => x.id === CHART.sel);
-  if (!n) { box.replaceChildren(h("p", { class: "hint" }, "Click a box to see what it does, the exact code, and the functions it calls.")); return; }
+  if (!n) { box.replaceChildren(...[h("p", { class: "hint" }, "Click a box to see what it does, the exact code, and the functions it calls."), contractCard(hit.sym)].filter(Boolean)); return; }
   const same = n.line === n.end;
   const calls = [], seen = new Set();
   for (const c of hit.sym.callees || []) {

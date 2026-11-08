@@ -268,3 +268,8 @@ span.ai-cite.bad{color:var(--warn);text-decoration:line-through dotted;cursor:he
 .ptabs button{font-size:13px;padding:3px 11px}
 .ptabs button.on,.ptabs button[aria-selected=true]{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:600}
 .h-filter{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;border-color:var(--primary)}
+
+.ct{margin:2px 0 6px 4.5em;font-size:12px}.ct>summary{cursor:pointer;color:var(--muted);line-height:1.5}.ct>summary:hover{color:var(--ink)}
+.ct-card{background:var(--hover);border-radius:6px;padding:6px 10px;margin-top:4px;display:grid;gap:3px}
+.ct-row{display:grid;grid-template-columns:9em 1fr;gap:8px;font-size:12.5px}.ct-row b{color:var(--muted);font-weight:600}.ct-row.warn b{color:var(--warn)}
+.fc-info .ct-card{margin-top:8px}

@@ -75,6 +75,11 @@ of your browser follow every file and tab you visit, and the address always link
 - **Health** and **AI** are described below.
 - Search (`/`) covers files and symbols. Views are linkable through the URL.
 
+
+**Function contracts.** Every function in the list has a one-line summary (what it takes, what it gives back, what it can
+fail with, what outside systems it uses) that opens into a card. Facts come from the syntax tree and the certain
+edges of the call graph only; guesses are never counted. The same card shows in the flowchart panel and the Flow step.
+
 ## Review what an agent changed
 
 ```bash
