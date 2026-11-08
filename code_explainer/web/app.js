@@ -50,7 +50,7 @@ const T = o => (o ? (LEVEL === "kid" ? o.kid : o.plain) || "" : "");
 const firstSentence = (t, n = 140) => { const m = t.match(/^.*?[.!?](\s|$)/); const x = (m ? m[0] : t).trim(); return x.length > n ? x.slice(0, n - 1) + "…" : x; };
 // `code` spans in generated text become <code> elements.
 const rich = t => String(t).split(/`([^`]+)`/).map((part, i) => (i % 2 ? h("code", {}, part) : part));
-const state = { tab: "story", storyStep: 0, symOpen: "", ctOpen: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
+const state = { tab: "story", storyStep: 0, symOpen: "", ctOpen: "", uses: "", selected: null, colorBy: "lang", tmRoot: "", expanded: new Set(),
   chart: "", comp: "", ptab: "summary", sym: "", hfile: "", focusChange: "", flowRoot: "", flowDepth: 4, flowGuess: true, flowOpen: new Set(), flowStep: -1 };
 
 // ---------- navigation ----------
@@ -706,13 +706,7 @@ function renderDetail() {
     contractBlock(sym),
     chartButton(f, sym),
     aixControls({ kind: "symbol", path: f.path, symbol: sym.qual }, true))) : h("span", { class: "empty", style: "padding:0" }, f.analyzed ? "No functions or classes found." : "Symbols are not extracted for this language yet.");
-  const code = h("div", { class: "code", id: "code" });
-  const lines = f.source ? f.source.split("\n") : [];
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  if (f.source) {
-    code.append(h("pre", { class: "g" }, lines.map((_, i) => i + 1).join("\n")), h("pre", { class: "s" }, f.source));
-    if (state.line) { code.append(h("div", { class: "hl", style: `top:${6 + (state.line - 1) * 18}px` })); }
-  }
+  const code = f.source ? readerCode(f) : h("div", { class: "code", id: "code" });
   const findings = D.hygiene ? D.hygiene.findings.filter(x => x.path === f.path).length : 0;
   const nLinks = f.imports.length + f.importedBy.length;
   const quality = healthDetail(f);
@@ -725,7 +719,7 @@ function renderDetail() {
       f.entry.length ? h("div", { class: "dsec" }, h("h3", {}, "Why it's an entry point"), f.entry.join("; ")) : null,
       chg ? h("div", { class: "dsec" }, h("h3", {}, `What changed (+${chg.added} / −${chg.deleted})`), diffEl(chg.patch)) : null,
       h("div", { class: "dsec" }, h("h3", {}, `Functions and classes (${f.symbols.length})`), syms)],
-    code: [h("div", { class: "dsec" }, h("h3", {}, "Source" + (f.truncated ? " (too large to embed)" : "")), f.source ? code : h("span", { class: "empty", style: "padding:0" }, "Source not embedded."))],
+    code: [h("div", { class: "dsec" }, h("h3", {}, "Source" + (f.truncated ? " (too large to embed)" : "")), f.source ? code : h("span", { class: "empty", style: "padding:0" }, "Source not embedded.")), f.source ? readerUses(f) : null],
     links: [archLink(f),
       h("div", { class: "dsec" }, h("h3", {}, `Imports (${f.imports.length})`), links(f.imports, "Imports nothing from this repo.")),
       h("div", { class: "dsec" }, h("h3", {}, `Imported by (${f.importedBy.length})`), links(f.importedBy, "Nothing imports this file."))],
@@ -891,6 +885,7 @@ function startLive() {
 // @@CHART@@
 // @@ARCH@@
 // @@CONTRACT@@
+// @@READER@@
 
 // ---------- boot ----------
 setData(JSON.parse(document.getElementById("data").textContent));
