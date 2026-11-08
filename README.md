@@ -88,6 +88,12 @@ margin, and puts a use count on every definition that opens into "Used like this
 what is risky, what changed, the guided story, or find something). Press `?` anywhere for the keyboard shortcuts.
 Numbers such as `cx 7` explain themselves on hover.
 
+**Local AI on the diagrams.** With `serve` and a local model, a flowchart box, a part of the Map and an arrow between
+two parts each get an "Explain with AI" button. The server builds the prompt from the analysis (the box's code and
+where its ways out lead; a part's files and neighbours; the import lines behind an arrow), answers are saved and reused,
+and the sources it was based on are links. `analyze --ai` also writes explanations of the biggest map parts into the
+saved report.
+
 ## Review what an agent changed
 
 ```bash
