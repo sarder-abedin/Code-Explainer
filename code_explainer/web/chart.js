@@ -206,7 +206,8 @@ function chartInfo() {
   if (!box || !hit) return;
   if (CHART.mermaid) { box.replaceChildren(chartMermaidPanel(hit)); return; }
   const n = hit.sym.flow.nodes.find(x => x.id === CHART.sel);
-  if (!n) { box.replaceChildren(...[h("p", { class: "hint" }, "Click a box to see what it does, the exact code, and the functions it calls."), contractCard(hit.sym)].filter(Boolean)); return; }
+  if (!n) { box.replaceChildren(...[h("p", { class: "hint" }, "Click a box to see what it does, the exact code, and the functions it calls."), contractCard(hit.sym),
+      aixControls({ kind: "symbol", path: hit.file.path, symbol: hit.sym.qual }, false, "✨ Walk me through this function")].filter(Boolean)); return; }
   const same = n.line === n.end;
   const calls = [], seen = new Set();
   for (const c of hit.sym.callees || []) {
@@ -224,7 +225,8 @@ function chartInfo() {
     n.code ? h("pre", { class: "snip" }, n.code) : null,
     n.kind === "start" || n.kind === "end" ? null : h("div", { class: "hint" }, same ? `Line ${n.line}` : `Lines ${n.line}–${n.end}`),
     n.kind === "start" || n.kind === "end" ? null : h("button", { class: "fc-showcode", onclick: () => { const p = hit.file.path, line = n.line; closeChart(); openFile(p, line); } }, "Show this in the code"),
-    calls.length ? h("div", {}, h("h3", {}, "Calls here"), h("ul", { class: "fc-calls" }, calls)) : null].filter(Boolean));
+    calls.length ? h("div", {}, h("h3", {}, "Calls here"), h("ul", { class: "fc-calls" }, calls)) : null,
+    ["start", "end", "more"].includes(n.kind) ? null : aixControls({ kind: "flowstep", path: hit.file.path, symbol: hit.sym.qual, node: n.id }, false)].filter(Boolean));
 }
 
 // ---------- Mermaid and SVG export ----------
