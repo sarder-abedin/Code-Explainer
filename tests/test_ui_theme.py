@@ -200,7 +200,7 @@ def test_text_is_readable_in_the_file_panel_with_code_findings_and_symbols(proj,
     assert page.evaluate(AUDIT) == [] and errors == []
 
 
-@pytest.mark.parametrize("colour_by", ["lang", "complexity", "churn", "popular", "unused", "understood"])
+@pytest.mark.parametrize("colour_by", ["lang", "loc", "complexity", "churn", "fanin", "unused", "understood"])
 def test_treemap_labels_are_readable_in_every_colour_mode(proj, page_for, colour_by):
     page, _ = open_page(page_for, proj, "#tab=treemap")
     page.wait_for_selector("#tm .tile")
