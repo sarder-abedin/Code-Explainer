@@ -107,6 +107,12 @@ def test_the_good_middling_and_poor_fills_look_green_amber_and_red():
     assert _hue(col("ov-low")) <= 25 or _hue(col("ov-low")) >= 340
 
 
+@pytest.mark.parametrize("name", ["tk-kw", "tk-str", "tk-cm", "tk-num"])
+def test_syntax_colours_are_readable_on_the_code_background(name):
+    assert contrast(col(name), col("panel")) >= 4.5
+    assert contrast(col(name), col("sel")) >= 4.5          # also under the highlighted line
+
+
 # ----------------------------------------------------------------- nothing hard-coded that bypasses the palette
 def test_no_stylesheet_text_colour_is_a_raw_hex_that_could_be_unreadable():
     uses = re.findall(r"(?<![\w-])color:(#[0-9a-fA-F]{3,6})", CSS)

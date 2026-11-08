@@ -17,6 +17,7 @@ from .explain import explain_repo
 from .calls import resolve_calls, sym_id
 from .diff import compare, resolve_ref, snapshot, story_steps
 from .duplicates import find_duplicates
+from . import contract
 from .flowgraph import apply_budget
 from . import architecture
 from .hygiene import scan as hygiene_scan
@@ -197,6 +198,8 @@ def _build(root: Path, name: str, churn_root: Path | None, explain: bool = True)
     flow_trimmed = apply_budget(files)
     resolve_imports(files)
     call_stats = resolve_calls(files, py_index(set(files)))
+    contract.finish(files)
+    contract_trimmed = contract.apply_budget(files)
     _declared_entry_points(root, files)
     _mark_entries_and_tests(files)
     _mark_unused(files)
@@ -229,6 +232,7 @@ def _build(root: Path, name: str, churn_root: Path | None, explain: bool = True)
         "callStats": call_stats,
         "duplicates": find_duplicates(files)[:25],
         "flowTrimmed": flow_trimmed,
+        "contractTrimmed": contract_trimmed,
     }
     if explain:   # the base snapshot of a change review only needs the structure
         data["tests"] = build_test_map(files)

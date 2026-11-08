@@ -21,6 +21,7 @@ from .runtime import AIRuntime
 from .settings import PROVIDERS
 
 DEFAULT_LIMIT = 10
+MAX_PARTS = 2
 START_WAIT_SECONDS = 600.0         # loading a large model into memory can take minutes
 MAX_ITEM_CHARS = 20_000
 _STOP_KINDS = ("not_ready", "unreachable")      # the model is gone: trying the next file would only fail the same way
@@ -74,13 +75,30 @@ def pick_targets(data: dict, limit: int) -> list[dict]:
     return changes[:n_changes] + files[:n_files]
 
 
+PART_SHARE = 5            # one part of the map for every this many targets, at most MAX_PARTS
+
+
+def pick_part_targets(data: dict, limit: int) -> list[dict]:
+    """The biggest parts of the architecture map, so the Map can explain itself in a static report."""
+    comps = (data.get("architecture") or {}).get("components", [])
+    n = min(MAX_PARTS, limit // PART_SHARE)
+    big = sorted(comps, key=lambda c: (-c["files"], -c["loc"], c["id"]))[:n]
+    return [{"kind": "part", "path": c["id"], "part": c["id"], "why": f"a main part of the project ({c['files']} files)"} for c in big]
+
+
+def pick_all(data: dict, limit: int) -> list[dict]:
+    """Files and changes first, then the main parts of the map; together never more than `limit`."""
+    parts = pick_part_targets(data, limit)
+    return pick_targets(data, limit - len(parts)) + parts
+
+
 # ----------------------------------------------------------------- running
 def _explain_one(chat, target: dict, params: dict, cancel: threading.Event) -> dict:
     """One target through ChatService.explain, boiled down to an outcome."""
     # ChatService sets the event it is given when an answer ends, so each answer gets its own; the batch's own
     # cancel is checked on every event (the model server sends keep-alive ticks even while it thinks).
     mine = threading.Event()
-    gen = chat.explain({"kind": target["kind"], "path": target["path"], "params": params}, mine)
+    gen = chat.explain({**{k: v for k, v in target.items() if k != "why"}, "params": params}, mine)
     title, parts, cached, done = "", [], False, None
     try:
         for ev in gen:
@@ -194,7 +212,7 @@ def generate(data: dict, cache_dir, spec: str | None, limit: int, level: str | N
     settings = ai_settings.load()
     provider, endpoint, model = choose_model(settings, spec)
     level = level or GenParams(**settings["params"]).level
-    targets = pick_targets(data, limit)
+    targets = pick_all(data, limit)
     if not targets:
         return BatchResult(level=level)
     runtime = AIRuntime(get_data=lambda: (0, data), cache_dir=cache_dir)

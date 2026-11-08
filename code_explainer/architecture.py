@@ -11,6 +11,7 @@ import posixpath
 from collections import Counter
 
 from . import flowlayout, graphs
+from .libkinds import KINDS, LIBRARIES, _KIND_OF, kind_of  # noqa: F401  (re-exported)
 from .analysis import CODE_LANGS
 from .model import FileInfo
 
@@ -24,27 +25,7 @@ EXAMPLES = 5
 _OTHER = "(other)"
 _ROOT = "(top level)"
 
-# kind -> label
-KINDS = {"database": "A database", "web-server": "Serves web requests", "web-client": "Calls web services",
-         "files": "Files on disk", "processes": "Other programs", "queue": "A message queue", "cloud": "Cloud services",
-         "ai": "An AI service", "command-line": "The command line", "email": "Email", "network": "Network connections"}
-# library (dotted or top-level name) -> kind. Only libraries that clearly mean "talks to something outside".
-LIBRARIES = {
-    "database": "sqlite3 sqlalchemy psycopg2 psycopg pymysql mysql pymongo redis peewee asyncpg aiosqlite motor sqlmodel prisma "
-                "django.db pg mysql2 mongodb mongoose ioredis sequelize typeorm knex better-sqlite3",
-    "web-server": "flask fastapi django starlette tornado bottle sanic http.server aiohttp.web express koa fastify next "
-                  "@nestjs/core @hapi/hapi",
-    "web-client": "requests httpx urllib3 aiohttp urllib.request axios node-fetch got superagent",
-    "files": "shutil glob tempfile fs fs-extra",
-    "processes": "subprocess multiprocessing child_process execa shelljs",
-    "queue": "celery kombu pika kafka confluent_kafka amqplib kafkajs bullmq",
-    "cloud": "boto3 botocore google.cloud azure firebase firebase-admin aws-sdk @aws-sdk/client-s3",
-    "ai": "openai anthropic google.generativeai cohere langchain transformers @anthropic-ai/sdk",
-    "command-line": "click typer argparse fire commander yargs",
-    "email": "smtplib nodemailer",
-    "network": "socket websockets ws socket.io",
-}
-_KIND_OF = {lib: kind for kind, libs in LIBRARIES.items() for lib in libs.split()}
+# the table of outside systems lives in libkinds.py (shared with the function contracts)
 
 
 # ----------------------------------------------------------------- finding the components
@@ -152,12 +133,9 @@ def _external_modules(info: FileInfo, local: set[str]) -> set[tuple[str, str]]:
             name = "/".join(parts[:2]) if name.startswith("@") else parts[0]
         if name.split(".")[0] in local:
             continue
-        pieces = name.split(".")
-        for k in range(len(pieces), 0, -1):
-            lib = ".".join(pieces[:k])
-            if lib in _KIND_OF:
-                found.add((_KIND_OF[lib], lib))
-                break
+        hit = kind_of(name)
+        if hit:
+            found.add(hit)
     return found
 
 

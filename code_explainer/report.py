@@ -9,7 +9,7 @@ from pathlib import Path
 
 WEB = Path(__file__).parent / "web"
 # Scripts spliced into app.js at their marker, so they share one closure in a single-file page.
-SPLICES = {"// @@AI@@": "ai.js", "// @@HEALTH@@": "health.js", "// @@CHART@@": "chart.js", "// @@ARCH@@": "arch.js"}
+SPLICES = {"// @@AI@@": "ai.js", "// @@HEALTH@@": "health.js", "// @@CHART@@": "chart.js", "// @@ARCH@@": "arch.js", "// @@CONTRACT@@": "contract.js", "// @@READER@@": "reader.js", "// @@GUIDE@@": "guide.js"}
 
 
 def _read(name: str) -> str:

@@ -188,6 +188,7 @@ function archCompInfo(c) {
     archList(LEVEL === "kid" ? "It talks to the outside world:" : "Talks to:", outside.map(e => { const x = archById(e.to); return [go(e.to, x.label), ` (${x.modules.join(", ")})`]; })),
     t.symbols ? h("p", {}, `Tests reach ${t.reached} of ${archPlural(t.symbols, "function")} (${Math.round(100 * t.reached / t.symbols)}%).`) : null,
     f.total ? h("p", {}, `${archPlural(f.total, "safety finding")} worth a look` + (f.high ? ` (${f.high} serious)` : "") + ". See the Health tab.") : null,
+    aixControls({ kind: "part", part: c.id }, false),
     archList(ARCH.allFiles ? "All files" : "Most used files", shown.map(archFileLink)),
     !ARCH.allFiles && c.files > shown.length ? h("button", { class: "ar-allfiles", onclick: () => { ARCH.allFiles = true; archInfo(); } }, `Show all ${c.files} files`) : null,
   ];
@@ -208,7 +209,8 @@ function archEdgeInfo(e) {
   return [h("h3", { class: "ar-title" }, `${a.name} → ${b.name || b.label}`), h("p", {}, `${a.name} ${verb} ${b.name || b.label}: ${what}.`),
     e.cycle ? h("p", { class: "ar-warn" }, "These parts are in an import circle.") : null,
     archList(e.to.startsWith("x:") ? "Examples (file and library)" : "Examples (importing file → imported file)",
-      e.examples.map(([p, q]) => [archFileLink(p), e.to.startsWith("x:") ? ` → ${q}` : [" → ", archFileLink(q)]]))];
+      e.examples.map(([p, q]) => [archFileLink(p), e.to.startsWith("x:") ? ` → ${q}` : [" → ", archFileLink(q)]])),
+    aixControls({ kind: "link", from: e.from, to: e.to }, false)];
 }
 
 // ---------- Mermaid and SVG export ----------
