@@ -84,6 +84,10 @@ edges of the call graph only; guesses are never counted. The same card shows in 
 (certain calls only, and Back returns you), marks risky lines, untested functions and lines changed in a review in the
 margin, and puts a use count on every definition that opens into "Used like this" with each call site and test.
 
+**Getting started.** The Overview opens with "What do you want to do?" (the big picture, what happens when it runs,
+what is risky, what changed, the guided story, or find something). Press `?` anywhere for the keyboard shortcuts.
+Numbers such as `cx 7` explain themselves on hover.
+
 ## Review what an agent changed
 
 ```bash

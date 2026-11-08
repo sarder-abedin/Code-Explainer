@@ -169,4 +169,4 @@ def test_pyproject_scripts_work_without_tomllib(tmp_path):
 def test_the_ai_script_is_spliced_into_the_page_exactly_once():
     from code_explainer import report
     html = report.render_html(analyze_repo(FIX / "pyapp", "pyapp"))
-    assert html.count("function renderAI(") == 1 and "@@AI@@" not in html and "@@HEALTH@@" not in html and "@@CHART@@" not in html and "@@ARCH@@" not in html and "@@CONTRACT@@" not in html and "@@READER@@" not in html and "function readerCode(" in html and "function contractCard(" in html and "{{SCRIPT}}" not in html
+    assert html.count("function renderAI(") == 1 and "@@AI@@" not in html and "@@HEALTH@@" not in html and "@@CHART@@" not in html and "@@ARCH@@" not in html and "@@CONTRACT@@" not in html and "@@READER@@" not in html and "@@GUIDE@@" not in html and "function startCard(" in html and "function readerCode(" in html and "function contractCard(" in html and "{{SCRIPT}}" not in html
