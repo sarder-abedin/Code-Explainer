@@ -34,6 +34,7 @@ function renderHealth(view) {
   const T0 = D.tests, S0 = D.hygiene;
   if (!T0 || !S0) { view.append(h("div", { class: "empty" }, "This report was made by an older version and has no health check.")); return; }
   const ts = T0.summary, hs = S0.summary;
+  const only = state.hfile;           // set by the file panel's Health button: show just this file
   const card = (n, l) => h("div", { class: "card" }, h("div", { class: "n" }, String(n)), h("div", { class: "l" }, l));
   view.append(
     h("div", { class: "health" },
@@ -46,14 +47,18 @@ function renderHealth(view) {
         card(hs.high + hs.medium, "safety findings worth a look"),
         card(S0.cycles.length, "groups of files that import each other in a circle"),
         card(fmt(S0.todos.total), "TODO / FIXME notes left in the code")),
+      only ? h("div", { class: "h-filter card" }, h("span", {}, "Showing only ", h("b", {}, only), " (",
+        h("a", { class: "link", style: "display:inline", onclick: () => openFile(only) }, "open the file"), ")"),
+        h("button", { id: "h-clear", onclick: () => { state.hfile = ""; writeHash(); renderAll(); } }, "Show everything")) : null,
       healthHotspots(T0), healthFiles(T0), healthSafety(S0), healthCycles(S0), healthTodos(S0),
       h("p", { class: "hint" }, "These checks read the code; they never run it. A function with “no test seen” may still be tested in a way a "
         + "static check cannot follow, and a finding is a place worth a look, not proof of a bug.")));
 }
 
 function healthHotspots(T0) {
+  const hot = T0.hotspots.filter(x => !state.hfile || x.path === state.hfile);
   return h("div", {}, h("h2", {}, "Risky code with no test", h("small", {}, "complex, widely used, and nothing seen testing it")),
-    T0.hotspots.length ? h("ul", { class: "list", id: "h-hotspots" }, T0.hotspots.map(x =>
+    hot.length ? h("ul", { class: "list", id: "h-hotspots" }, hot.map(x =>
       h("li", { tabindex: 0, onclick: () => BY.has(x.path) && openFile(x.path, x.line), onkeydown: e => { if (e.key === "Enter" && BY.has(x.path)) openFile(x.path, x.line); } },
         h("span", {}, h("span", { class: "p" }, x.qual), h("span", { class: "why" }, `${x.path}:${x.line} · complexity ${x.complexity}`
           + (x.callers ? ` · used by ${x.callers} other ${x.callers === 1 ? "function" : "functions"}` : "")))))) :
@@ -62,7 +67,7 @@ function healthHotspots(T0) {
 
 function healthFiles(T0) {
   const rank = { untested: 0, imported: 1, partial: 2 };
-  const rows = Object.entries(T0.files).filter(([, e]) => e.state in rank)
+  const rows = Object.entries(T0.files).filter(([path, e]) => e.state in rank && (!state.hfile || path === state.hfile))
     .sort((a, b) => rank[a[1].state] - rank[b[1].state] || (BY.get(b[0]) || {}).loc - (BY.get(a[0]) || {}).loc).slice(0, 20);
   return h("div", {}, h("h2", {}, "Files that are not fully tested", h("small", {}, "least tested first")),
     rows.length ? h("ul", { class: "list", id: "h-files" }, rows.map(([path, e]) => h("li", { tabindex: 0, "data-path": path, onclick: () => BY.has(path) && openFile(path) },
@@ -72,7 +77,7 @@ function healthFiles(T0) {
 }
 
 function healthSafety(S0) {
-  const shown = S0.findings.filter(f => HEALTH.tests || !f.test);
+  const shown = S0.findings.filter(f => (HEALTH.tests || !f.test) && (!state.hfile || f.path === state.hfile));
   const counts = Object.fromEntries(SEV_ORDER.map(s => [s, shown.filter(f => f.sev === s).length]));
   const list = shown.filter(f => !HEALTH.sev.size || HEALTH.sev.has(f.sev));
   const head = h("h2", {}, "Safety check", h("small", {}, `${S0.summary.total} thing${S0.summary.total === 1 ? "" : "s"} found`));
@@ -89,17 +94,19 @@ function healthSafety(S0) {
 }
 
 function healthCycles(S0) {
-  if (!S0.cycles.length) return null;
+  const cycles = S0.cycles.filter(c => !state.hfile || c.files.includes(state.hfile));
+  if (!cycles.length) return null;
   return h("div", {}, h("h2", {}, "Import circles", h("small", {}, "files that need each other")),
-    h("ul", { class: "list" }, S0.cycles.map(c => h("li", { class: "cycle", tabindex: 0, onclick: () => BY.has(c.files[0]) && openFile(c.files[0]) },
+    h("ul", { class: "list" }, cycles.map(c => h("li", { class: "cycle", tabindex: 0, onclick: () => BY.has(c.files[0]) && openFile(c.files[0]) },
       h("span", {}, h("span", { class: "p" }, c.files.map(base).join(" ↔ ") + (c.size > c.files.length ? " …" : "")),
         h("span", { class: "why" }, c.benign ? "involves a package __init__ file, which is usually harmless" : "move the shared part into a third file"))))));
 }
 
 function healthTodos(S0) {
-  if (!S0.todos.total) return null;
+  const todos = S0.todos.files.filter(f => !state.hfile || f.path === state.hfile);
+  if (!S0.todos.total || !todos.length) return null;
   return h("div", {}, h("h2", {}, "Unfinished notes", h("small", {}, "TODO, FIXME, HACK, XXX")),
-    h("ul", { class: "list" }, S0.todos.files.map(f => h("li", { tabindex: 0, onclick: () => BY.has(f.path) && openFile(f.path) },
+    h("ul", { class: "list" }, todos.map(f => h("li", { tabindex: 0, onclick: () => BY.has(f.path) && openFile(f.path) },
       h("span", {}, h("span", { class: "p" }, f.path), h("span", { class: "why" }, `${f.count} note${f.count === 1 ? "" : "s"}`))))));
 }
 
