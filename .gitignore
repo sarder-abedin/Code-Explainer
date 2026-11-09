@@ -11,5 +11,7 @@ report.html
 =======
 .coverage
 htmlcov/
+.vscode/browser.vc.db
 >>>>>>> d463bb8d5243d079dfa5128b0f90790d2dc68e3c
 *.db-shm
+.vscode/
