@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}} · Code Explainer</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{{FAVICON}}">
 <style>{{STYLE}}</style>
 </head>
 <body>
 <header>
+  <a class="logo-link" href="#tab=story" aria-label="Code Explainer, back to the start">{{LOGO}}<span class="product">Code Explainer</span></a>
   <div class="brand" id="brand"></div>
   <nav id="tabs">
     <button data-tab="story">Story</button>
@@ -28,6 +30,7 @@
       <option value="tech">Technical</option>
     </select>
   </label>
+  <button id="help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts ( ? )">?</button>
   <span id="live" class="live" hidden></span>
   <div class="search">
     <input id="search" type="search" placeholder="Search files and symbols  ( / )" autocomplete="off" spellcheck="false">

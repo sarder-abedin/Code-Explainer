@@ -399,7 +399,7 @@ function aiResolveCite(name, line) {
   return { ok: true, path };
 }
 
-function aiOpenCode(path, line) { openFile(path, line); }
+function aiOpenCode(path, line) { if (document.getElementById("chart")) closeChart(); openFile(path, line); }
 
 function aiSourceChips(sources) {
   return h("div", { class: "ai-sources" }, h("span", { class: "hint" }, "Based on: "),
@@ -635,13 +635,14 @@ function aiStopAnswer() {
 // Results live in AIX, keyed by what is explained and the reading level, so they survive the panels being redrawn.
 // The browser only names the target; the server builds the prompt, and saved answers are reused (even with the AI stopped).
 const AIX = new Map();
-const aixKey = t => [LEVEL, t.kind, t.path, t.symbol || "", t.parent || ""].join("|");
+const aixKey = t => [LEVEL, t.kind, t.path || "", t.symbol || "", t.parent || "", t.node == null ? "" : t.node, t.part || "", t.from || "", t.to || ""].join("|");
+const AIX_LABELS = { change: "✨ Explain this change with AI", flowstep: "✨ Explain this box with AI", part: "✨ Explain this part with AI", link: "✨ Explain this arrow with AI" };
 
-function aixControls(target, compact) {
+function aixControls(target, compact, label) {
   if (!SERVE) return aixBaked(target);
-  if ((target.kind === "symbol" || target.kind === "flow") && (!target.symbol || target.symbol === "<module>")) return null;
+  if (["symbol", "flow", "flowstep"].includes(target.kind) && (!target.symbol || target.symbol === "<module>")) return null;
   const el = h("div", { class: "aix", "data-aix": aixKey(target) });
-  el._target = target; el._compact = !!compact;
+  el._target = target; el._compact = !!compact; el._label = label || "";
   aixFill(el);
   return el;
 }
@@ -650,7 +651,7 @@ function aixControls(target, compact) {
 // They are shown read-only, and always labelled as AI-written.
 const AIX_LEVELS = { kid: "beginner-friendly", plain: "plain-English", tech: "technical" };
 function aixBaked(target) {
-  const b = D.aiExplain, item = b && b.items && b.items[target.kind + "|" + target.path];
+  const b = D.aiExplain, item = b && b.items && b.items[target.kind + "|" + (target.part || target.path)];
   if (!item) return null;
   const text = h("div", { class: "aix-text" });
   aiRenderText(text, item.text);
@@ -663,7 +664,7 @@ function aixBaked(target) {
 }
 
 function aixFill(el) {
-  el.replaceChildren(...aixBody(el._target, aixKey(el._target), el._compact));
+  el.replaceChildren(...aixBody(el._target, aixKey(el._target), el._compact, el._label));
 }
 
 function aixPaint(key) {
@@ -678,10 +679,10 @@ function aixPaintText(key, st) {
   }
 }
 
-function aixBody(target, key, compact) {
+function aixBody(target, key, compact, label) {
   const st = AIX.get(key);
   if (!st) return [h("button", { class: "aix-btn" + (compact ? " compact" : ""), "data-kind": target.kind, title: "Explain with the local AI",
-    onclick: () => aixRun(target, key, false) }, compact ? "✨ Explain" : (target.kind === "change" ? "✨ Explain this change with AI" : "✨ Explain with AI"))];
+    onclick: () => aixRun(target, key, false) }, label || (compact ? "✨ Explain" : (AIX_LABELS[target.kind] || "✨ Explain with AI")))];
   const text = h("div", { class: "aix-text" });
   aiRenderText(text, st.text);
   const box = h("div", { class: "aix-box" });

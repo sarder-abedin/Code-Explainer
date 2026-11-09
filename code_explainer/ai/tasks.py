@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from .prompts import estimate_tokens
 
 TEMPLATE_VERSION = 1
-KINDS = ("file", "symbol", "flow", "change")
+KINDS = ("file", "symbol", "flow", "change", "flowstep", "part", "link")
 MIN_BUDGET_TOKENS = 60
 SYMBOL_LINES = 120
 FLOW_LINES = 60
@@ -26,6 +26,10 @@ OUTLINE_MAX = 150
 PATCH_CHARS = 10_000
 CHANGE_SYMBOLS = 3
 CHANGE_SYMBOL_LINES = 40
+PART_FILES = 3
+PART_HEAD_LINES = 25
+LINK_EXAMPLES = 4
+BOX_CONTEXT_LINES = FLOW_LINES
 _CALL_WINDOW = 6
 _MAX_FIELD = 500
 
@@ -288,6 +292,104 @@ def _build_change(proj, b, path, ch):
                 shown += 1
 
 
+# ----------------------------------------------------------------- a box of a flowchart
+def _build_flowstep(proj, b, path, name, node_id):
+    sid = _find_symbol(proj, path, name)
+    f, s = proj.by_sid[sid]
+    flow = s.get("flow")
+    if not flow:
+        raise TaskError(f"{name} has no flowchart")
+    if type(node_id) is not int or not any(n["id"] == node_id for n in flow["nodes"]):
+        raise TaskError("the request needs the number of a box in the flowchart")
+    n = next(x for x in flow["nodes"] if x["id"] == node_id)
+    if n["kind"] in ("start", "end", "more"):
+        raise TaskError("this box only marks the start or end; there is nothing to explain")
+    by_id = {x["id"]: x for x in flow["nodes"]}
+    lines = proj.lines(path)
+    b.code(path, n["line"], lines[n["line"] - 1: n["end"]], f"box {node_id} of {s['qual']}", "the box you asked about",
+           required=True, order=1)
+    outs = [f"- {('if ' + repr(e['label']) + ': ') if e['label'] else ''}goes on to {by_id[e['to']]['kind']} at line {by_id[e['to']]['line']}: "
+            f"{by_id[e['to']]['say']['plain']}" for e in flow["edges"] if e["from"] == node_id]
+    calls = [proj.label(c["id"]) for c in s.get("callees", [])
+             if c["conf"] == "certain" and n["line"] <= c["line"] <= n["end"] and c["id"] in proj.by_sid and proj.by_sid[c["id"]][1]["kind"] != "module"]
+    facts = [f"- this box is a {n['kind']} (line {n['line']}" + (f"-{n['end']}" if n["end"] != n["line"] else "") + f") in {s['qual']}",
+             f"- the chart says: {n['say']['plain']}"]
+    facts += [f"- way out {o[2:]}" for o in outs] or ["- no way out is drawn"]
+    if calls:
+        facts.append("- calls here: " + ", ".join(dict.fromkeys(calls)))
+    b.text("Facts about this box (exact, from the flowchart):\n" + "\n".join(facts), order=0)
+    _symbol_code(proj, b, sid, BOX_CONTEXT_LINES, "the function around the box", note="(the whole function, for context)", required=False, order=2)
+    return sid, n
+
+
+# ----------------------------------------------------------------- a part of the map, and an arrow between two parts
+def _arch(proj):
+    a = proj.data.get("architecture")
+    if not a:
+        raise TaskError("there is no architecture map for this project")
+    names = {c["id"]: c["name"] for c in a["components"]}
+    names.update({x["id"]: x["label"] for x in a.get("externals", [])})
+    return a, names
+
+
+def _imports_between(proj, frm: str, to: str) -> list[tuple[int, str]]:
+    """The import lines in file `frm` that name `to` (a file path or an outside module)."""
+    import re
+    stem = re.escape((to.rsplit("/", 1)[-1].rsplit(".", 1)[0] if to in proj.files else to.split(".")[0]) or to)
+    pat = re.compile(rf"^\s*(from|import|const|export)\b.*\b{stem}\b|^\s*(from|import)\b.*\b{stem}\b")
+    return [(i, l) for i, l in enumerate(proj.lines(frm), 1) if pat.search(l)][:4]
+
+
+def _build_part(proj, b, part):
+    a, names = _arch(proj)
+    c = next((x for x in a["components"] if x["id"] == part), None)
+    if c is None:
+        raise TaskError(f"there is no part called {part} on the map")
+    facts = [f"- {c['name']}: {c['files']} file(s), {c['loc']} lines of code"]
+    if c.get("doc"):
+        facts.append(f"- what its own docs say: {c['doc']}")
+    if c.get("entry"):
+        facts.append("- it contains the program's entry point")
+    if c.get("cycle"):
+        facts.append("- it is part of a circular dependency")
+    t = c.get("tests") or {}
+    if t.get("symbols"):
+        facts.append(f"- tests: {t['reached']} of {t['symbols']} functions are reached by a test (static estimate)")
+    fi = c.get("findings") or {}
+    if fi.get("total"):
+        facts.append(f"- safety notes: {fi['total']} ({fi.get('high', 0)} high, {fi.get('medium', 0)} medium)")
+    if c.get("top"):
+        facts.append("- its main files: " + ", ".join(_clean(p) for p in c["top"]))
+    used_by = [f"{names.get(e['from'], e['from'])} ({e['imports']} imports, {e['calls']} calls)" for e in a["edges"] if e["to"] == part]
+    uses = [f"{names.get(e['to'], e['to'])} ({e['imports']} imports, {e['calls']} calls)" for e in a["edges"] if e["from"] == part]
+    facts.append("- used by: " + (", ".join(used_by) if used_by else "no other part"))
+    facts.append("- uses: " + (", ".join(uses) if uses else "no other part"))
+    b.text("Facts about this part of the project (exact, from static analysis):\n" + "\n".join(facts), order=0)
+    for p in (c.get("top") or [])[:PART_FILES]:
+        head = proj.lines(p)[:PART_HEAD_LINES]
+        b.code(p, 1, head, f"the start of {p.rsplit('/', 1)[-1]}", f"a main file of {c['name']}",
+               more=max(0, len(proj.lines(p)) - len(head)), order=2)
+    return c
+
+
+def _build_link(proj, b, frm, to):
+    a, names = _arch(proj)
+    e = next((x for x in a["edges"] if x["from"] == frm and x["to"] == to), None)
+    if e is None:
+        raise TaskError("there is no arrow between those two parts")
+    facts = [f"- {names.get(frm, frm)} depends on {names.get(to, to)}: {e['imports']} import(s) and {e['calls']} function call(s) found"]
+    if e.get("cycle"):
+        facts.append("- the two parts are part of a circular dependency (each ends up needing the other)")
+    pairs = e.get("examples", [])[:LINK_EXAMPLES]
+    if pairs:
+        facts.append("- example links: " + "; ".join(f"{_clean(x)} -> {_clean(y)}" for x, y in pairs))
+    b.text("Facts about this arrow (exact, from static analysis):\n" + "\n".join(facts), order=0)
+    for x, y in pairs:
+        for ln, text in _imports_between(proj, x, y):
+            b.code(x, ln, [text], f"{x.rsplit('/', 1)[-1]} imports {y.rsplit('/', 1)[-1]}", f"an import from {names.get(frm, frm)} to {names.get(to, to)}", order=2)
+    return e, names
+
+
 _STATUS_WORDS = {"A": "was added", "D": "was removed", "R": "was renamed or moved", "M": "was modified"}
 
 
@@ -297,17 +399,42 @@ def build_task(data: dict, req: object, budget_tokens: int) -> Task:
     kind = req.get("kind")
     if kind not in KINDS:
         raise TaskError(f"kind must be one of {', '.join(KINDS)}")
-    path = _field(req, "path")
+    path = "" if kind in ("part", "link") else _field(req, "path")
     if budget_tokens < MIN_BUDGET_TOKENS:
         raise TaskError("the context window is too small to explain anything; raise the context size in the AI settings")
     proj = _Project(data)
-    if kind == "change":
+    if kind in ("part", "link"):
+        pass
+    elif kind == "change":
         ch = data.get("changes")
         if not ch:
             raise TaskError("no change review is loaded (start serve or analyze with --base)")
     elif path not in proj.files:
         raise TaskError(f"{path} is not in this project")
     b = _Budget(budget_tokens)
+
+    if kind == "flowstep":
+        name = _field(req, "symbol")
+        sid, n = _build_flowstep(proj, b, path, name, req.get("node"))
+        message = (f"In `{name}` ({_clean(path)}), explain this box of its flowchart (line {n['line']}"
+                   + (f"-{n['end']}" if n["end"] != n["line"] else "") + f"): \"{n['say']['plain']}\". "
+                   "Say what the code in the box does, what each way out of it means, and why it matters to the rest of the function. "
+                   "Cite the code as path:line.")
+        return Task(kind, f"{sid}#{n['id']}", f"Explain this box of `{name}`", message, b.context(), b.sources)
+
+    if kind == "part":
+        part = _field(req, "part")
+        c = _build_part(proj, b, part)
+        message = (f"Explain the part `{c['name']}` of this project: what it is for, what is inside it, who uses it and what it uses. "
+                   "Cite the code as path:line.")
+        return Task(kind, part, f"Explain the part `{c['name']}`", message, b.context(), b.sources)
+
+    if kind == "link":
+        frm, to = _field(req, "from"), _field(req, "to")
+        e, names = _build_link(proj, b, frm, to)
+        message = (f"Explain the arrow from `{names.get(frm, frm)}` to `{names.get(to, to)}` on the map: why the first depends on the second, "
+                   "what it uses from it, and whether the dependency looks healthy. Cite the code as path:line.")
+        return Task(kind, f"{frm}->{to}", f"Explain the link `{names.get(frm, frm)}` to `{names.get(to, to)}`", message, b.context(), b.sources)
 
     if kind == "symbol":
         name = _field(req, "symbol")

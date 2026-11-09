@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
 from pathlib import Path
 
 WEB = Path(__file__).parent / "web"
 # Scripts spliced into app.js at their marker, so they share one closure in a single-file page.
-SPLICES = {"// @@AI@@": "ai.js", "// @@HEALTH@@": "health.js", "// @@CHART@@": "chart.js", "// @@ARCH@@": "arch.js"}
+SPLICES = {"// @@AI@@": "ai.js", "// @@HEALTH@@": "health.js", "// @@CHART@@": "chart.js", "// @@ARCH@@": "arch.js", "// @@CONTRACT@@": "contract.js", "// @@READER@@": "reader.js", "// @@GUIDE@@": "guide.js"}
 
 
 def _read(name: str) -> str:
@@ -19,6 +20,15 @@ def _json_for_script(data: dict) -> str:
     # Nothing in the payload may close the <script> element or open an HTML comment.
     text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def _logo() -> str:
+    """The logo as inline SVG for the header (classed, so the page can size it)."""
+    return _read("logo.svg").strip().replace("<svg ", '<svg class="logo" ', 1)
+
+
+def _favicon() -> str:
+    return urllib.parse.quote(_read("logo.svg").strip(), safe="")
 
 
 def _script() -> str:
@@ -37,6 +47,8 @@ def render_html(data: dict, serve: dict | None = None) -> str:
     parts = {
         "{{TITLE}}": data["repo"]["name"].replace("<", "&lt;").replace(">", "&gt;"),
         "{{STYLE}}": _read("style.css"),
+        "{{LOGO}}": _logo(),
+        "{{FAVICON}}": _favicon(),
         "{{SCRIPT}}": _script().replace("</script", "<\\/script"),
         "{{DATA}}": _json_for_script(data),
         "{{SERVE}}": _json_for_script(serve) if serve else "null",

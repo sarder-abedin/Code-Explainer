@@ -22,6 +22,7 @@ class Symbol:
     callees: list = field(default_factory=list)
     explain: dict = field(default_factory=dict)  # {"kid": str, "plain": str}
     flow: dict | None = None  # the laid-out step-by-step chart (see flowgraph.py), only for functions with choices
+    contract: dict | None = None  # what it takes, hands back, can fail with and touches (see contract.py)
 
     def __post_init__(self):
         if not self.qual:
@@ -35,6 +36,8 @@ class Symbol:
         }
         if self.flow:
             d["flow"] = self.flow
+        if self.contract:
+            d["contract"] = self.contract
         return d
 
 

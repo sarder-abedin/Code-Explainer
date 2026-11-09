@@ -1,3 +1,5 @@
+<p align="center"><img src="code_explainer/web/logo.svg" width="96" alt="Code Explainer logo"></p>
+
 # Code Explainer
 
 Code written by a coding agent (or someone else) is hard to follow once there is a lot of it.
@@ -41,6 +43,12 @@ tools, calling is asking a helper for a favour.
 
 ## Navigate
 
+Open any file and its panel has four tabs: **Summary** (what it is for, its functions), **Code**, **Connections**
+(what it imports and what imports it, and its part on the map) and **Tests & safety**. Under the file name a
+**Show in** bar jumps to the same file or function in the other views: Map, Flow (any function can be a starting
+point), Dependencies, Treemap, Health (filtered to this file) and, in a review, Changes. The Back and Forward buttons
+of your browser follow every file and tab you visit, and the address always links to exactly what you were looking at.
+
 - **Flow:** pick a starting point (console script, web route, `main()`, a script) and read what
   runs, in order, as an expandable call tree. Step through it with the code shown. Links are marked
   *certain* (followed through names and imports) or *guess* (matched by method name only).
@@ -66,6 +74,25 @@ tools, calling is asking a helper for a favour.
   supported; JavaScript/TypeScript needs `[treesitter]`. The words come from fixed rules, not a model.
 - **Health** and **AI** are described below.
 - Search (`/`) covers files and symbols. Views are linkable through the URL.
+
+
+**Function contracts.** Every function in the list has a one-line summary (what it takes, what it gives back, what it can
+fail with, what outside systems it uses) that opens into a card. Facts come from the syntax tree and the certain
+edges of the call graph only; guesses are never counted. The same card shows in the flowchart panel and the Flow step.
+
+**Reading code.** The Code tab colours Python, JavaScript and TypeScript, turns calls into links to their definitions
+(certain calls only, and Back returns you), marks risky lines, untested functions and lines changed in a review in the
+margin, and puts a use count on every definition that opens into "Used like this" with each call site and test.
+
+**Getting started.** The Overview opens with "What do you want to do?" (the big picture, what happens when it runs,
+what is risky, what changed, the guided story, or find something). Press `?` anywhere for the keyboard shortcuts.
+Numbers such as `cx 7` explain themselves on hover.
+
+**Local AI on the diagrams.** With `serve` and a local model, a flowchart box, a part of the Map and an arrow between
+two parts each get an "Explain with AI" button. The server builds the prompt from the analysis (the box's code and
+where its ways out lead; a part's files and neighbours; the import lines behind an arrow), answers are saved and reused,
+and the sources it was based on are links. `analyze --ai` also writes explanations of the biggest map parts into the
+saved report.
 
 ## Review what an agent changed
 

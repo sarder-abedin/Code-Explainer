@@ -117,7 +117,7 @@ def test_filtering_by_severity(proj, page_for):
 
 
 def test_a_file_shows_which_tests_reach_it_and_what_they_miss(proj, page_for):
-    page, _ = health(page_for, proj, "#tab=overview&f=shop/lib.py")
+    page, _ = health(page_for, proj, "#tab=overview&f=shop/lib.py&pt=quality")
     page.wait_for_selector("#detail:not([hidden]) .dsec.testsec")
     sec = page.locator(".dsec.testsec").inner_text()
     assert "partly tested" in sec.lower() and "tests/test_lib.py" in sec and "lonely" in sec
@@ -126,12 +126,13 @@ def test_a_file_shows_which_tests_reach_it_and_what_they_miss(proj, page_for):
 
 
 def test_a_file_lists_its_own_findings_and_symbols_show_a_no_test_badge(proj, page_for):
-    page, _ = health(page_for, proj, "#tab=overview&f=shop/lib.py")
-    page.wait_for_selector("#detail:not([hidden]) .dsec.testsec")
-    own = page.locator("#detail .finding")
-    assert own.count() >= 3 and SECRET not in page.locator("#detail .dsec.safesec").inner_text()
+    page, _ = health(page_for, proj, "#tab=overview&f=shop/lib.py")                  # the summary lists the functions
+    page.wait_for_selector("#detail:not([hidden]) .symwrap")
     assert page.locator("#detail .symwrap", has_text="lonely").locator(".nt").count() == 1
     assert page.locator("#detail .symwrap", has_text="price").locator(".nt").count() == 0
+    page.click('#detail [role=tab][data-ptab="quality"]')                             # tests and safety have their own tab
+    page.wait_for_selector("#detail .dsec.testsec")
+    assert page.locator("#detail .finding").count() >= 3 and SECRET not in page.locator("#detail .dsec.safesec").inner_text()
 
 
 def test_changes_flag_new_code_that_no_test_reaches(repo, page_for):

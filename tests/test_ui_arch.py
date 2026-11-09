@@ -249,14 +249,14 @@ def test_the_picture_can_be_downloaded_as_a_standalone_svg(proj, page_for):
 
 
 def test_a_file_links_back_to_its_part_on_the_map(proj, page_for):
-    page, errors = page_for(analyze_repo(proj, "x"), "#tab=overview&f=shop/core/cart.py")
-    page.wait_for_selector("#detail:not([hidden])")
+    page, errors = page_for(analyze_repo(proj, "x"), "#tab=overview&f=shop/core/cart.py&pt=links")      # connections tab
+    page.wait_for_selector("#detail:not([hidden]) .ar-partof")
     page.locator("#detail .ar-partof").click()
     page.wait_for_selector("#arch .ar-comp.sel")
     assert "core" in page.locator("#arch .ar-info").inner_text() and "tab=map" in page.evaluate("location.hash") and errors == []
 
 
 def test_a_file_that_is_not_on_the_map_has_no_such_link(proj, page_for):
-    page, _ = page_for(analyze_repo(proj, "x"), "#tab=overview&f=tests/test_cart.py")
-    page.wait_for_selector("#detail:not([hidden])")
-    assert page.locator("#detail .ar-partof").count() == 0
+    page, _ = page_for(analyze_repo(proj, "x"), "#tab=overview&f=tests/test_cart.py&pt=links")
+    page.wait_for_selector("#detail:not([hidden]) [data-panel=links]")
+    assert page.locator("#detail .ar-partof").count() == 0 and "shop/core/cart.py" in page.locator("#detail [data-panel=links]").inner_text()
