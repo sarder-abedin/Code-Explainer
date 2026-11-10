@@ -7,7 +7,18 @@ dist/
 report.html
 <<<<<<< HEAD
 .venv/
+<<<<<<< HEAD
 =======
 .coverage
 htmlcov/
 >>>>>>> d463bb8d5243d079dfa5128b0f90790d2dc68e3c
+=======
+.vscode/
+=======
+.coverage
+htmlcov/
+.vscode/browser.vc.db
+>>>>>>> d463bb8d5243d079dfa5128b0f90790d2dc68e3c
+*.db-shm
+.vscode/
+>>>>>>> fb47bf9e34ffa1b42f32db2d5237c894ef729927
