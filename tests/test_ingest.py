@@ -98,3 +98,29 @@ def test_open_repo_clone_cleans_up(tmp_path, monkeypatch):
     with open_repo("https://example.invalid/o/my-repo.git") as (root, name):
         assert name == "my-repo" and root.is_dir()
     assert not root.exists()  # temp clone removed afterwards
+
+
+def test_a_repo_that_uses_git_lfs_can_be_cloned_without_git_lfs_installed(tmp_path, monkeypatch):
+    """The machine has no git-lfs, yet the repository's .gitattributes sends files through it."""
+    import shutil
+    src = tmp_path / "src"
+    src.mkdir()
+    git = lambda *a: subprocess.run(["git", "-C", str(src), *a], check=True, capture_output=True)  # noqa: E731
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "a@b.c")
+    git("config", "user.name", "t")
+    (src / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n")
+    (src / "big.bin").write_text("version https://git-lfs.github.com/spec/v1\noid sha256:" + "a" * 64 + "\nsize 5\n")
+    (src / "m.py").write_text("def f():\n    return 1\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "one")
+    global_cfg = tmp_path / "gitconfig"
+    global_cfg.write_text('[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_cfg))
+    only_git = tmp_path / "bin"                         # a PATH with git but without git-lfs, whatever this machine has
+    only_git.mkdir()
+    (only_git / "git").symlink_to(shutil.which("git"))
+    monkeypatch.setenv("PATH", str(only_git))
+    monkeypatch.setattr(ingest, "_clone_url", lambda target: str(src))        # clone from the local repository
+    with open_repo("https://example.invalid/o/r.git") as (root, name):
+        assert (root / "m.py").read_text().startswith("def f") and (root / "big.bin").exists()

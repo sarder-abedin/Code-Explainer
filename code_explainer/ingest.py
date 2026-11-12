@@ -50,6 +50,11 @@ def _clone_url(target: str) -> str | None:
     return None
 
 
+# Large files kept in Git LFS are not needed to understand the code, and a machine without git-lfs would
+# fail the whole checkout, so the LFS filter is switched off: such files arrive as their small pointer text.
+_NO_LFS = ["-c", "filter.lfs.smudge=", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false"]
+
+
 @contextmanager
 def open_repo(target: str, depth: int = 500):
     """Yield (root, display_name) for a local path or a git URL."""
@@ -65,8 +70,8 @@ def open_repo(target: str, depth: int = 500):
         dest = Path(tmp) / "repo"
         try:
             subprocess.run(
-                ["git", "clone", "--quiet", "--depth", str(depth), url, str(dest)],
-                capture_output=True, text=True, check=True, timeout=600,
+                ["git", *_NO_LFS, "clone", "--quiet", "--depth", str(depth), url, str(dest)],
+                capture_output=True, text=True, check=True, timeout=600, env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"},
             )
         except subprocess.CalledProcessError as e:
             raise IngestError(f"git clone failed: {e.stderr.strip()}") from e
